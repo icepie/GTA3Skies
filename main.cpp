@@ -502,11 +502,11 @@ extern "C" void OnModLoad()
     }
     
     // 设置钩子 - 使用符号方式（GTA3和VC符号名相同）
-    void* renderScene = aml->GetSym(hGTAGame, "_Z11RenderScenev");
-    void* newTileRenderer = aml->GetSym(hGTAGame, "_Z17NewTileRende");
+    uintptr_t renderScene = aml->GetSym(hGTAGame, "_Z11RenderScenev");
+    uintptr_t newTileRenderer = aml->GetSym(hGTAGame, "_Z17NewTileRende");
     
-    if(renderScene) HOOKBL(RenderClouds, renderScene);
-    if(newTileRenderer) HOOKBL(RenderClouds, newTileRenderer);
+    if(renderScene) HOOKBL(RenderClouds, (void*)renderScene);
+    if(newTileRenderer) HOOKBL(RenderClouds, (void*)newTileRenderer);
     
     // 只在Vice City中启用IMPROVED_MOON相关钩子
     if(!isGTA3)
