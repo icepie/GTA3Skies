@@ -6,8 +6,11 @@
 #include <math.h>
 #include <time.h>
 
-#define IMPROVED_MOON
 #define STARRY_SKIES
+
+#ifndef GTA3_TARGET
+#define IMPROVED_MOON
+#endif
 
 #define IMPROVED_MOON_HEIGHT    (50.0f)
 #define STARS_STARTHOUR         22
@@ -15,9 +18,16 @@
 
 
 
-uintptr_t pGTAVC;
-void *hGTAVC;
+uintptr_t pGame;
+void *hGame;
 bool hasJPatch15;
+
+#ifdef GTA3_TARGET
+static bool CanSeeOutsideFallback() { return true; }
+static float ExtraSunnynessFallback = 0.0f;
+static float AspectRatioFallback = 4.0f / 3.0f;
+static uint32_t MoonSizeFallback = 0;
+#endif
 
 #include "SimpleGTA.h"
 #include "vars.inl"
@@ -31,8 +41,13 @@ bool hasJPatch15;
 
 
 
+#ifdef GTA3_TARGET
+MYMOD(net.icepie.gta3skies, GTA3Skies, 0.1, icepie)
+NEEDGAME(com.rockstar.gta3)
+#else
 MYMOD(net.rusjj.viceskies, ViceSkies, 1.3, RusJJ)
 NEEDGAME(com.rockstargames.gtavc)
+#endif
 
 float LowCloudsX[12] = { 1.0f,  0.7f,  0.0f, -0.7f, -1.0f, -0.7f, 0.0f, 0.7f, 0.8f, -0.8f,  0.4f, -0.4f };
 float LowCloudsY[12] = { 0.0f, -0.7f, -1.0f, -0.7f,  0.0f,  0.7f, 1.0f, 0.7f, 0.4f,  0.4f, -0.8f, -0.8f };
@@ -74,6 +89,11 @@ CVector MoonVector;
 inline float SQR(float v) { return v*v; }
 DECL_HOOKv(RenderClouds)
 {
+  #ifdef GTA3_TARGET
+    RenderClouds();
+    if(RsGlobal && RsGlobal->y != 0) AspectRatioFallback = (float)RsGlobal->x / (float)RsGlobal->y;
+  #endif
+
     float szx, szy;
     RwV3d screenpos;
     RwV3d worldpos;
@@ -400,79 +420,104 @@ __attribute__((optnone)) __attribute__((naked)) void WeatherUpdate_Inject(void)
 
 extern "C" void OnModLoad()
 {
+  #ifdef GTA3_TARGET
+    logger->SetTag("GTA3 Skies");
+    pGame = aml->GetLib("libR1.so");
+    hGame = aml->GetLibHandle("libR1.so");
+  #else
     logger->SetTag("Vice Skies");
-    pGTAVC = aml->GetLib("libGTAVC.so");
-    hGTAVC = aml->GetLibHandle("libGTAVC.so");
+    pGame = aml->GetLib("libGTAVC.so");
+    hGame = aml->GetLibHandle("libGTAVC.so");
+  #endif
     hasJPatch15 = aml->HasModOfVersion("net.rusjj.jpatch", "1.5");
     
-    if(!pGTAVC || !hGTAVC)
+    if(!pGame || !hGame)
     {
+      #ifdef GTA3_TARGET
+        logger->Error("This mod only supports GTA3 v1.8 AML builds using libR1.so. Stopping.");
+      #else
         logger->Error("This mod only for Vice City. Stopping.");
+      #endif
         return;
     }
 
     logger->Info("Warming up the code...");
     
-    SET_TO(CanSeeOutSideFromCurrArea,  aml->GetSym(hGTAVC, "_ZN5CGame25CanSeeOutSideFromCurrAreaEv"));
-    SET_TO(RwRenderStateSet,           aml->GetSym(hGTAVC, "_Z16RwRenderStateSet13RwRenderStatePv"));
-    SET_TO(InitSpriteBuffer,           aml->GetSym(hGTAVC, "_ZN7CSprite16InitSpriteBufferEv"));
-    SET_TO(FlushSpriteBuffer,          aml->GetSym(hGTAVC, "_ZN7CSprite17FlushSpriteBufferEv"));
-    SET_TO(CalcScreenCoors,            aml->GetSym(hGTAVC, "_ZN7CSprite15CalcScreenCoorsERK5RwV3dPS0_PfS4_b"));
-    SET_TO(RenderBufferedOneXLUSprite, aml->GetSym(hGTAVC, "_ZN7CSprite26RenderBufferedOneXLUSpriteEfffffhhhsfh"));
-    SET_TO(RenderBufferedOneXLUSprite_Rotate_Dimension, aml->GetSym(hGTAVC, "_ZN7CSprite43RenderBufferedOneXLUSprite_Rotate_DimensionEfffffhhhsffh"));
-    SET_TO(RenderBufferedOneXLUSprite_Rotate_Aspect,    aml->GetSym(hGTAVC, "_ZN7CSprite40RenderBufferedOneXLUSprite_Rotate_AspectEfffffhhhsffh"));
-    SET_TO(RenderBufferedOneXLUSprite_Rotate_2Colours,  aml->GetSym(hGTAVC, "_ZN7CSprite42RenderBufferedOneXLUSprite_Rotate_2ColoursEfffffhhhhhhffffh"));
-    SET_TO(GetATanOfXY,                aml->GetSym(hGTAVC, "_ZN8CGeneral11GetATanOfXYEff"));
-    SET_TO(RwIm3DTransform,            aml->GetSym(hGTAVC, "_Z15RwIm3DTransformP18RxObjSpace3DVertexjP11RwMatrixTagj"));
-    SET_TO(RwIm3DRenderIndexedPrimitive,aml->GetSym(hGTAVC, "_Z28RwIm3DRenderIndexedPrimitive15RwPrimitiveTypePti"));
-    SET_TO(RwIm3DEnd,                  aml->GetSym(hGTAVC, "_Z9RwIm3DEndv"));
+  #ifdef GTA3_TARGET
+    CanSeeOutSideFromCurrArea = CanSeeOutsideFallback;
+  #else
+    SET_TO(CanSeeOutSideFromCurrArea,  aml->GetSym(hGame, "_ZN5CGame25CanSeeOutSideFromCurrAreaEv"));
+  #endif
+    SET_TO(RwRenderStateSet,           aml->GetSym(hGame, "_Z16RwRenderStateSet13RwRenderStatePv"));
+    SET_TO(InitSpriteBuffer,           aml->GetSym(hGame, "_ZN7CSprite16InitSpriteBufferEv"));
+    SET_TO(FlushSpriteBuffer,          aml->GetSym(hGame, "_ZN7CSprite17FlushSpriteBufferEv"));
+    SET_TO(CalcScreenCoors,            aml->GetSym(hGame, "_ZN7CSprite15CalcScreenCoorsERK5RwV3dPS0_PfS4_b"));
+    SET_TO(RenderBufferedOneXLUSprite, aml->GetSym(hGame, "_ZN7CSprite26RenderBufferedOneXLUSpriteEfffffhhhsfh"));
+    SET_TO(RenderBufferedOneXLUSprite_Rotate_Dimension, aml->GetSym(hGame, "_ZN7CSprite43RenderBufferedOneXLUSprite_Rotate_DimensionEfffffhhhsffh"));
+    SET_TO(RenderBufferedOneXLUSprite_Rotate_Aspect,    aml->GetSym(hGame, "_ZN7CSprite40RenderBufferedOneXLUSprite_Rotate_AspectEfffffhhhsffh"));
+    SET_TO(RenderBufferedOneXLUSprite_Rotate_2Colours,  aml->GetSym(hGame, "_ZN7CSprite42RenderBufferedOneXLUSprite_Rotate_2ColoursEfffffhhhhhhffffh"));
+    SET_TO(GetATanOfXY,                aml->GetSym(hGame, "_ZN8CGeneral11GetATanOfXYEff"));
+    SET_TO(RwIm3DTransform,            aml->GetSym(hGame, "_Z15RwIm3DTransformP18RxObjSpace3DVertexjP11RwMatrixTagj"));
+    SET_TO(RwIm3DRenderIndexedPrimitive,aml->GetSym(hGame, "_Z28RwIm3DRenderIndexedPrimitive15RwPrimitiveTypePti"));
+    SET_TO(RwIm3DEnd,                  aml->GetSym(hGame, "_Z9RwIm3DEndv"));
     
-    SET_TO(SunBlockedByClouds,         aml->GetSym(hGTAVC, "_ZN8CCoronas18SunBlockedByCloudsE"));
-    SET_TO(Foggyness,                  aml->GetSym(hGTAVC, "_ZN8CWeather9FoggynessE"));
-    SET_TO(CloudCoverage,              aml->GetSym(hGTAVC, "_ZN8CWeather13CloudCoverageE"));
-    SET_TO(ms_fAspectRatio,            aml->GetSym(hGTAVC, "_ZN5CDraw15ms_fAspectRatioE"));
-    SET_TO(ExtraSunnyness,             aml->GetSym(hGTAVC, "_ZN8CWeather14ExtraSunnynessE"));
-    SET_TO(ms_cameraRoll,              aml->GetSym(hGTAVC, "_ZN7CClouds13ms_cameraRollE"));
-    SET_TO(CloudRotation,              aml->GetSym(hGTAVC, "_ZN7CClouds13CloudRotationE"));
-    SET_TO(Rainbow,                    aml->GetSym(hGTAVC, "_ZN8CWeather7RainbowE"));
-    SET_TO(SunScreenX,                 aml->GetSym(hGTAVC, "_ZN8CCoronas10SunScreenXE"));
-    SET_TO(SunScreenY,                 aml->GetSym(hGTAVC, "_ZN8CCoronas10SunScreenYE"));
-    SET_TO(InterpolationValue,         aml->GetSym(hGTAVC, "_ZN8CWeather18InterpolationValueE"));
-    SET_TO(gpCoronaTexture,            aml->GetSym(hGTAVC, "gpCoronaTexture"));
-    SET_TO(gpCloudTex,                 aml->GetSym(hGTAVC, "gpCloudTex"));
-    SET_TO(ms_nGameClockHours,         aml->GetSym(hGTAVC, "_ZN6CClock18ms_nGameClockHoursE"));
-    SET_TO(ms_nGameClockMinutes,       aml->GetSym(hGTAVC, "_ZN6CClock20ms_nGameClockMinutesE"));
-    SET_TO(ms_nGameClockSeconds,       aml->GetSym(hGTAVC, "_ZN6CClock20ms_nGameClockSecondsE"));
-    SET_TO(m_nCurrentLowCloudsRed,     aml->GetSym(hGTAVC, "_ZN10CTimeCycle22m_nCurrentLowCloudsRedE"));
-    SET_TO(m_nCurrentLowCloudsGreen,   aml->GetSym(hGTAVC, "_ZN10CTimeCycle24m_nCurrentLowCloudsGreenE"));
-    SET_TO(m_nCurrentLowCloudsBlue,    aml->GetSym(hGTAVC, "_ZN10CTimeCycle23m_nCurrentLowCloudsBlueE"));
-    SET_TO(m_nCurrentFluffyCloudsTopRed,      aml->GetSym(hGTAVC, "_ZN10CTimeCycle28m_nCurrentFluffyCloudsTopRedE"));
-    SET_TO(m_nCurrentFluffyCloudsTopGreen,    aml->GetSym(hGTAVC, "_ZN10CTimeCycle30m_nCurrentFluffyCloudsTopGreenE"));
-    SET_TO(m_nCurrentFluffyCloudsTopBlue,     aml->GetSym(hGTAVC, "_ZN10CTimeCycle29m_nCurrentFluffyCloudsTopBlueE"));
-    SET_TO(m_nCurrentFluffyCloudsBottomRed,   aml->GetSym(hGTAVC, "_ZN10CTimeCycle31m_nCurrentFluffyCloudsBottomRedE"));
-    SET_TO(m_nCurrentFluffyCloudsBottomGreen, aml->GetSym(hGTAVC, "_ZN10CTimeCycle33m_nCurrentFluffyCloudsBottomGreenE"));
-    SET_TO(m_nCurrentFluffyCloudsBottomBlue,  aml->GetSym(hGTAVC, "_ZN10CTimeCycle32m_nCurrentFluffyCloudsBottomBlueE"));
-    SET_TO(m_CurrentStoredValue,       aml->GetSym(hGTAVC, "_ZN10CTimeCycle20m_CurrentStoredValueE"));
-    SET_TO(IndividualRotation,         aml->GetSym(hGTAVC, "_ZN7CClouds18IndividualRotationE"));
-    SET_TO(MoonSize,                   aml->GetSym(hGTAVC, "_ZN8CCoronas8MoonSizeE"));
-    SET_TO(m_snTimeInMilliseconds,     aml->GetSym(hGTAVC, "_ZN6CTimer22m_snTimeInMillisecondsE"));
-    SET_TO(NewWeatherType,             aml->GetSym(hGTAVC, "_ZN8CWeather14NewWeatherTypeE"));
-    SET_TO(OldWeatherType,             aml->GetSym(hGTAVC, "_ZN8CWeather14OldWeatherTypeE"));
-    SET_TO(RsGlobal,                   aml->GetSym(hGTAVC, "RsGlobal"));
-    SET_TO(TheCamera,                  aml->GetSym(hGTAVC, "TheCamera"));
-    SET_TO(m_VectorToSun,              aml->GetSym(hGTAVC, "_ZN10CTimeCycle13m_VectorToSunE"));
+    SET_TO(SunBlockedByClouds,         aml->GetSym(hGame, "_ZN8CCoronas18SunBlockedByCloudsE"));
+    SET_TO(Foggyness,                  aml->GetSym(hGame, "_ZN8CWeather9FoggynessE"));
+    SET_TO(CloudCoverage,              aml->GetSym(hGame, "_ZN8CWeather13CloudCoverageE"));
+    SET_TO(ms_cameraRoll,              aml->GetSym(hGame, "_ZN7CClouds13ms_cameraRollE"));
+    SET_TO(CloudRotation,              aml->GetSym(hGame, "_ZN7CClouds13CloudRotationE"));
+    SET_TO(Rainbow,                    aml->GetSym(hGame, "_ZN8CWeather7RainbowE"));
+    SET_TO(SunScreenX,                 aml->GetSym(hGame, "_ZN8CCoronas10SunScreenXE"));
+    SET_TO(SunScreenY,                 aml->GetSym(hGame, "_ZN8CCoronas10SunScreenYE"));
+    SET_TO(InterpolationValue,         aml->GetSym(hGame, "_ZN8CWeather18InterpolationValueE"));
+    SET_TO(gpCoronaTexture,            aml->GetSym(hGame, "gpCoronaTexture"));
+    SET_TO(gpCloudTex,                 aml->GetSym(hGame, "gpCloudTex"));
+    SET_TO(ms_nGameClockHours,         aml->GetSym(hGame, "_ZN6CClock18ms_nGameClockHoursE"));
+    SET_TO(ms_nGameClockMinutes,       aml->GetSym(hGame, "_ZN6CClock20ms_nGameClockMinutesE"));
+    SET_TO(ms_nGameClockSeconds,       aml->GetSym(hGame, "_ZN6CClock20ms_nGameClockSecondsE"));
+    SET_TO(m_nCurrentLowCloudsRed,     aml->GetSym(hGame, "_ZN10CTimeCycle22m_nCurrentLowCloudsRedE"));
+    SET_TO(m_nCurrentLowCloudsGreen,   aml->GetSym(hGame, "_ZN10CTimeCycle24m_nCurrentLowCloudsGreenE"));
+    SET_TO(m_nCurrentLowCloudsBlue,    aml->GetSym(hGame, "_ZN10CTimeCycle23m_nCurrentLowCloudsBlueE"));
+    SET_TO(m_nCurrentFluffyCloudsTopRed,      aml->GetSym(hGame, "_ZN10CTimeCycle28m_nCurrentFluffyCloudsTopRedE"));
+    SET_TO(m_nCurrentFluffyCloudsTopGreen,    aml->GetSym(hGame, "_ZN10CTimeCycle30m_nCurrentFluffyCloudsTopGreenE"));
+    SET_TO(m_nCurrentFluffyCloudsTopBlue,     aml->GetSym(hGame, "_ZN10CTimeCycle29m_nCurrentFluffyCloudsTopBlueE"));
+    SET_TO(m_nCurrentFluffyCloudsBottomRed,   aml->GetSym(hGame, "_ZN10CTimeCycle31m_nCurrentFluffyCloudsBottomRedE"));
+    SET_TO(m_nCurrentFluffyCloudsBottomGreen, aml->GetSym(hGame, "_ZN10CTimeCycle33m_nCurrentFluffyCloudsBottomGreenE"));
+    SET_TO(m_nCurrentFluffyCloudsBottomBlue,  aml->GetSym(hGame, "_ZN10CTimeCycle32m_nCurrentFluffyCloudsBottomBlueE"));
+    SET_TO(m_CurrentStoredValue,       aml->GetSym(hGame, "_ZN10CTimeCycle20m_CurrentStoredValueE"));
+    SET_TO(IndividualRotation,         aml->GetSym(hGame, "_ZN7CClouds18IndividualRotationE"));
+    SET_TO(m_snTimeInMilliseconds,     aml->GetSym(hGame, "_ZN6CTimer22m_snTimeInMillisecondsE"));
+    SET_TO(NewWeatherType,             aml->GetSym(hGame, "_ZN8CWeather14NewWeatherTypeE"));
+    SET_TO(OldWeatherType,             aml->GetSym(hGame, "_ZN8CWeather14OldWeatherTypeE"));
+    SET_TO(RsGlobal,                   aml->GetSym(hGame, "RsGlobal"));
+    SET_TO(TheCamera,                  aml->GetSym(hGame, "TheCamera"));
+    SET_TO(m_VectorToSun,              aml->GetSym(hGame, "_ZN10CTimeCycle13m_VectorToSunE"));
+  #ifdef GTA3_TARGET
+    ms_fAspectRatio = &AspectRatioFallback;
+    ExtraSunnyness = &ExtraSunnynessFallback;
+    MoonSize = &MoonSizeFallback;
+    if(RsGlobal && RsGlobal->y != 0) AspectRatioFallback = (float)RsGlobal->x / (float)RsGlobal->y;
+  #else
+    SET_TO(ms_fAspectRatio,            aml->GetSym(hGame, "_ZN5CDraw15ms_fAspectRatioE"));
+    SET_TO(ExtraSunnyness,             aml->GetSym(hGame, "_ZN8CWeather14ExtraSunnynessE"));
+    SET_TO(MoonSize,                   aml->GetSym(hGame, "_ZN8CCoronas8MoonSizeE"));
+  #endif
     CamPos = (CVector*)(TheCamera + 0x30); // both in 1.09 and 1.12
     
-    HOOKBL(RenderClouds, pGTAVC + BYBIT(0x14EA6E + 0x1, 0x1FA750)); // RenderScene
-    HOOKBL(RenderClouds, pGTAVC + BYBIT(0x14D8DC + 0x1, 0x1F99DC)); // NewTileRendererCB
+  #ifdef GTA3_TARGET
+    HOOK(RenderClouds, aml->GetSym(hGame, "_Z11RenderScenev"));
+  #else
+    HOOKBL(RenderClouds, pGame + BYBIT(0x14EA6E + 0x1, 0x1FA750)); // RenderScene
+    HOOKBL(RenderClouds, pGame + BYBIT(0x14D8DC + 0x1, 0x1F99DC)); // NewTileRendererCB
+  #endif
     
-  #ifdef IMPROVED_MOON
-    FireSniper_BackTo = pGTAVC + BYBIT(0x26B056 + 0x1, 0x363758);
-    aml->Redirect(pGTAVC + BYBIT(0x26B036 + 0x1, 0x36373C), (uintptr_t)FireSniper_Inject);
+  #if defined(IMPROVED_MOON) && !defined(GTA3_TARGET)
+    FireSniper_BackTo = pGame + BYBIT(0x26B056 + 0x1, 0x363758);
+    aml->Redirect(pGame + BYBIT(0x26B036 + 0x1, 0x36373C), (uintptr_t)FireSniper_Inject);
 
     // A fix for moon disappearing on Sunny->Extrasunny weather !!!
-    WeatherUpdate_BackTo = pGTAVC + BYBIT(0x211F88 + 0x1, 0x2F8708);
-    aml->Redirect(pGTAVC + BYBIT(0x211F7A + 0x1, 0x2F86F4), (uintptr_t)WeatherUpdate_Inject);
+    WeatherUpdate_BackTo = pGame + BYBIT(0x211F88 + 0x1, 0x2F8708);
+    aml->Redirect(pGame + BYBIT(0x211F7A + 0x1, 0x2F86F4), (uintptr_t)WeatherUpdate_Inject);
   #endif
 
   #ifdef STARRY_SKIES
@@ -480,4 +525,8 @@ extern "C" void OnModLoad()
   #endif
 }
 
+#ifdef GTA3_TARGET
+Config cfgLocal("GTA3Skies"); Config* cfg = &cfgLocal;
+#else
 Config cfgLocal("ViceSkies"); Config* cfg = &cfgLocal;
+#endif

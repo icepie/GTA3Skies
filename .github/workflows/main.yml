@@ -32,11 +32,14 @@ jobs:
         ndk-version: r24
         local-cache: true
 
-    - name: Build the code...
+    - name: Build GTA3Skies...
       run: ndk-build NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk NDK_DEBUG=0 -j4
 
-    - name: Upload the mod!
+    - name: List build outputs...
+      run: find ./libs -maxdepth 3 -type f -print
+
+    - name: Upload GTA3Skies...
       uses: actions/upload-artifact@v4
       with:
-        name: compiled-mod.zip
+        name: GTA3Skies-android
         path: ./libs

@@ -404,3 +404,7 @@ build.ps1
 ndkpath.txt
 .vscode/settings.json
 mod/
+.aml_tmp/
+reverse/
+*.apk
+*.so
