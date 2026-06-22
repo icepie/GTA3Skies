@@ -49,6 +49,7 @@ static bool GTA3DrawCloudsAfterScene = false;
 static bool GTA3DrawCloudsInHorizon = false;
 static bool GTA3DrawSkyBeforeWorld = true;
 static bool GTA3MoonMovesWithTime = false;
+static bool GTA3ColourFilter = false;
 static uint32_t CameraPosOffset = 0x34;
 static float DebugSpriteDistance = 120.0f;
 static float DebugSpriteSize = 80.0f;
@@ -65,6 +66,14 @@ static float GTA3Re3LowCloudBaseZ = 40.0f;
 static float GTA3Re3LowCloudZScale = 60.0f;
 static float GTA3Re3LowCloudWidthScale = 320.0f;
 static float GTA3Re3LowCloudHeightScale = 40.0f;
+static float GTA3ColourFilterRedScale = 1.0f;
+static float GTA3ColourFilterGreenScale = 1.0f;
+static float GTA3ColourFilterBlueScale = 1.0f;
+static float GTA3ColourFilterAlphaScale = 1.0f;
+static float GTA3ColourFilterRedBias = 0.0f;
+static float GTA3ColourFilterGreenBias = 0.0f;
+static float GTA3ColourFilterBlueBias = 0.0f;
+static float GTA3ColourFilterAlphaBias = 0.0f;
 static int32_t GTA3LowCloudAlpha = 255;
 static uint32_t RenderHookCounter = 0;
 static uint32_t BackgroundHookCounter = 0;
@@ -110,6 +119,11 @@ static uint8_t ClampToByte(int32_t value)
     if(value < 0) return 0;
     if(value > 255) return 255;
     return (uint8_t)value;
+}
+
+static uint32_t GTA3ApplyColourFilterChannel(uint32_t value, float scale, float bias)
+{
+    return ClampToByte((int32_t)roundf((float)value * scale + bias));
 }
 
 static void GTA3ForceLowCloudColour(int& r, int& g, int& b, float& lowcintens)
@@ -587,6 +601,20 @@ DECL_HOOKv(RenderEverythingBarRoads)
     }
 
     RenderEverythingBarRoads();
+}
+
+DECL_HOOKv(MotionBlurRender, void* camera, uint32_t red, uint32_t green, uint32_t blue, uint32_t blur, int32_t type, uint32_t bluralpha)
+{
+    if(GTA3ColourFilter)
+    {
+        red = GTA3ApplyColourFilterChannel(red, GTA3ColourFilterRedScale, GTA3ColourFilterRedBias);
+        green = GTA3ApplyColourFilterChannel(green, GTA3ColourFilterGreenScale, GTA3ColourFilterGreenBias);
+        blue = GTA3ApplyColourFilterChannel(blue, GTA3ColourFilterBlueScale, GTA3ColourFilterBlueBias);
+        blur = GTA3ApplyColourFilterChannel(blur, GTA3ColourFilterAlphaScale, GTA3ColourFilterAlphaBias);
+        bluralpha = GTA3ApplyColourFilterChannel(bluralpha, GTA3ColourFilterAlphaScale, GTA3ColourFilterAlphaBias);
+    }
+
+    MotionBlurRender(camera, red, green, blue, blur, type, bluralpha);
 }
 
 #endif
@@ -1144,6 +1172,7 @@ extern "C" void OnModLoad()
     GTA3DrawCloudsInHorizon = cfg->GetBool("GTA3DrawCloudsInHorizon", false);
     GTA3DrawSkyBeforeWorld = cfg->GetBool("GTA3DrawSkyBeforeWorld", true);
     GTA3MoonMovesWithTime = cfg->GetBool("GTA3MoonMovesWithTime", false);
+    GTA3ColourFilter = cfg->GetBool("GTA3ColourFilter", false);
     CameraPosOffset = cfg->GetInt("CameraPosOffset", 0x34);
     if(CameraPosOffset == 0x30) CameraPosOffset = 0x34;
     DebugSpriteDistance = cfg->GetFloat("DebugSpriteDistance", 120.0f);
@@ -1162,6 +1191,14 @@ extern "C" void OnModLoad()
     GTA3Re3LowCloudWidthScale = cfg->GetFloat("GTA3Re3LowCloudWidthScale", 320.0f);
     GTA3Re3LowCloudHeightScale = cfg->GetFloat("GTA3Re3LowCloudHeightScale", 40.0f);
     GTA3LowCloudAlpha = cfg->GetInt("GTA3LowCloudAlpha", 255);
+    GTA3ColourFilterRedScale = cfg->GetFloat("GTA3ColourFilterRedScale", 1.0f);
+    GTA3ColourFilterGreenScale = cfg->GetFloat("GTA3ColourFilterGreenScale", 1.0f);
+    GTA3ColourFilterBlueScale = cfg->GetFloat("GTA3ColourFilterBlueScale", 1.0f);
+    GTA3ColourFilterAlphaScale = cfg->GetFloat("GTA3ColourFilterAlphaScale", 1.0f);
+    GTA3ColourFilterRedBias = cfg->GetFloat("GTA3ColourFilterRedBias", 0.0f);
+    GTA3ColourFilterGreenBias = cfg->GetFloat("GTA3ColourFilterGreenBias", 0.0f);
+    GTA3ColourFilterBlueBias = cfg->GetFloat("GTA3ColourFilterBlueBias", 0.0f);
+    GTA3ColourFilterAlphaBias = cfg->GetFloat("GTA3ColourFilterAlphaBias", 0.0f);
     ScreenWidthFallback = cfg->GetFloat("ScreenWidth", 2340.0f);
     ScreenHeightFallback = cfg->GetFloat("ScreenHeight", 1080.0f);
     if(ScreenWidthFallback > 1.0f && ScreenHeightFallback > 1.0f)
@@ -1184,7 +1221,8 @@ extern "C" void OnModLoad()
     HOOK(RenderHorizon, aml->GetSym(hGame, "_ZN7CClouds13RenderHorizonEv"));
     HOOKBL(RenderEverythingBarRoads, pGame + 0x1C0374 + 0x1);
     HOOK(RenderClouds, aml->GetSym(hGame, "_Z11RenderScenev"));
-    GTA3SKIES_LOG("Loaded. pGame=%p hGame=%p RenderBackground=%p RenderHorizon=%p DoRWRenderHorizon=%p RenderEverythingBarRoads=%p RenderScene=%p beforeWorldHook=%p aspect=%.3f cameraOffset=0x%X ForceVisibleClouds=%d RenderFluffyClouds=%d DebugSprite=%d screenSpace=%d LowCloudScreen=%d LowCloudBg=%d LowCloudHorizon=%d SkyBeforeWorld=%d LowCloudCorona=%d MoonMoves=%d LogRenderHook=%d",
+    HOOK(MotionBlurRender, aml->GetSym(hGame, "_ZN6CMBlur16MotionBlurRenderEP8RwCamerajjjjij"));
+    GTA3SKIES_LOG("Loaded. pGame=%p hGame=%p RenderBackground=%p RenderHorizon=%p DoRWRenderHorizon=%p RenderEverythingBarRoads=%p RenderScene=%p MotionBlurRender=%p beforeWorldHook=%p aspect=%.3f cameraOffset=0x%X ForceVisibleClouds=%d RenderFluffyClouds=%d DebugSprite=%d screenSpace=%d LowCloudScreen=%d LowCloudBg=%d LowCloudHorizon=%d SkyBeforeWorld=%d LowCloudCorona=%d MoonMoves=%d ColourFilter=%d LogRenderHook=%d",
                   (void*)pGame,
                   hGame,
                   (void*)aml->GetSym(hGame, "_ZN7CClouds16RenderBackgroundEsssssss"),
@@ -1192,6 +1230,7 @@ extern "C" void OnModLoad()
                   (void*)aml->GetSym(hGame, "_Z17DoRWRenderHorizonv"),
                   (void*)aml->GetSym(hGame, "_ZN9CRenderer24RenderEverythingBarRoadsEv"),
                   (void*)aml->GetSym(hGame, "_Z11RenderScenev"),
+                  (void*)aml->GetSym(hGame, "_ZN6CMBlur16MotionBlurRenderEP8RwCamerajjjjij"),
                   (void*)(pGame + 0x1C0374 + 0x1),
                   AspectRatioFallback,
                   CameraPosOffset,
@@ -1205,6 +1244,7 @@ extern "C" void OnModLoad()
                   GTA3DrawSkyBeforeWorld,
                   GTA3LowCloudUseCoronaTexture,
                   GTA3MoonMovesWithTime,
+                  GTA3ColourFilter,
                   LogRenderHook);
   #else
     HOOKBL(RenderClouds, pGame + BYBIT(0x14EA6E + 0x1, 0x1FA750)); // RenderScene
