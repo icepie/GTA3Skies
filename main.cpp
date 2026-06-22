@@ -33,9 +33,14 @@ bool hasJPatch15;
 static bool CanSeeOutsideFallback() { return true; }
 static float ExtraSunnynessFallback = 0.0f;
 static float AspectRatioFallback = 4.0f / 3.0f;
+static float ScreenWidthFallback = 2340.0f;
+static float ScreenHeightFallback = 1080.0f;
 static uint32_t MoonSizeFallback = 0;
 static bool ForceVisibleClouds = true;
 static bool LogRenderHook = true;
+static bool LogCameraCandidates = true;
+static bool RenderFluffyClouds = false;
+static uint32_t CameraPosOffset = 0x30;
 static uint32_t RenderHookCounter = 0;
 #endif
 
@@ -102,11 +107,19 @@ DECL_HOOKv(RenderClouds)
   #ifdef GTA3_TARGET
     RenderClouds();
     ++RenderHookCounter;
-    if(RsGlobal && RsGlobal->y != 0) AspectRatioFallback = (float)RsGlobal->x / (float)RsGlobal->y;
     if(LogRenderHook && RenderHookCounter == 1)
     {
         GTA3SKIES_LOG("RenderScene hook hit. RsGlobal=%p TheCamera=%p CamPos=%p gpCloudTex=%p gpCoronaTexture=%p",
                       RsGlobal, TheCamera, CamPos, gpCloudTex, gpCoronaTexture);
+    }
+    if(LogCameraCandidates && RenderHookCounter == 1 && TheCamera)
+    {
+        const uint32_t offsets[] = { 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0 };
+        for(uint32_t offset : offsets)
+        {
+            CVector* candidate = (CVector*)(TheCamera + offset);
+            GTA3SKIES_LOG("TheCamera+0x%X = (%.2f %.2f %.2f)", offset, candidate->x, candidate->y, candidate->z);
+        }
     }
   #endif
 
@@ -245,7 +258,11 @@ DECL_HOOKv(RenderClouds)
     }
     
     // Fluffy Clouds
-    if(coverage < 1)
+    if(coverage < 1
+      #ifdef GTA3_TARGET
+        && RenderFluffyClouds
+      #endif
+    )
     {
         float ARdiff = (3.0f * *ms_fAspectRatio) / 4.0f; // is it necessary? gonna check later!
         float distLimit = ((3.0f * (float)(RsGlobal->x)) / 4.0f) * ARdiff;
@@ -563,21 +580,36 @@ extern "C" void OnModLoad()
     MoonSize = &MoonSizeFallback;
     ForceVisibleClouds = cfg->GetBool("ForceVisibleClouds", true);
     LogRenderHook = cfg->GetBool("LogRenderHook", true);
-    if(RsGlobal && RsGlobal->y != 0) AspectRatioFallback = (float)RsGlobal->x / (float)RsGlobal->y;
+    LogCameraCandidates = cfg->GetBool("LogCameraCandidates", true);
+    RenderFluffyClouds = cfg->GetBool("RenderFluffyClouds", false);
+    CameraPosOffset = cfg->GetInt("CameraPosOffset", 0x30);
+    ScreenWidthFallback = cfg->GetFloat("ScreenWidth", 2340.0f);
+    ScreenHeightFallback = cfg->GetFloat("ScreenHeight", 1080.0f);
+    if(ScreenWidthFallback > 1.0f && ScreenHeightFallback > 1.0f)
+    {
+        AspectRatioFallback = ScreenWidthFallback / ScreenHeightFallback;
+    }
   #else
     SET_TO(ms_fAspectRatio,            aml->GetSym(hGame, "_ZN5CDraw15ms_fAspectRatioE"));
     SET_TO(ExtraSunnyness,             aml->GetSym(hGame, "_ZN8CWeather14ExtraSunnynessE"));
     SET_TO(MoonSize,                   aml->GetSym(hGame, "_ZN8CCoronas8MoonSizeE"));
   #endif
+  #ifdef GTA3_TARGET
+    CamPos = (CVector*)(TheCamera + CameraPosOffset);
+  #else
     CamPos = (CVector*)(TheCamera + 0x30); // both in 1.09 and 1.12
+  #endif
     
   #ifdef GTA3_TARGET
     HOOK(RenderClouds, aml->GetSym(hGame, "_Z11RenderScenev"));
-    GTA3SKIES_LOG("Loaded. pGame=%p hGame=%p RenderScene=%p ForceVisibleClouds=%d LogRenderHook=%d",
+    GTA3SKIES_LOG("Loaded. pGame=%p hGame=%p RenderScene=%p aspect=%.3f cameraOffset=0x%X ForceVisibleClouds=%d RenderFluffyClouds=%d LogRenderHook=%d",
                   (void*)pGame,
                   hGame,
                   (void*)aml->GetSym(hGame, "_Z11RenderScenev"),
+                  AspectRatioFallback,
+                  CameraPosOffset,
                   ForceVisibleClouds,
+                  RenderFluffyClouds,
                   LogRenderHook);
   #else
     HOOKBL(RenderClouds, pGame + BYBIT(0x14EA6E + 0x1, 0x1FA750)); // RenderScene
