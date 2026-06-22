@@ -40,7 +40,11 @@ static bool ForceVisibleClouds = true;
 static bool LogRenderHook = true;
 static bool LogCameraCandidates = true;
 static bool RenderFluffyClouds = false;
+static bool DebugSprite = true;
+static bool DebugSpriteScreenSpace = false;
 static uint32_t CameraPosOffset = 0x30;
+static float DebugSpriteDistance = 120.0f;
+static float DebugSpriteSize = 80.0f;
 static uint32_t RenderHookCounter = 0;
 #endif
 
@@ -411,6 +415,51 @@ DECL_HOOKv(RenderClouds)
             }
         }
     }
+
+  #ifdef GTA3_TARGET
+    if(DebugSprite)
+    {
+        RwRenderStateSet(1, *(gpCoronaTexture[0]));
+        RwRenderStateSet(8, (void*)0);
+        RwRenderStateSet(6, (void*)0);
+        RwRenderStateSet(12, (void*)1);
+        RwRenderStateSet(10, (void*)2);
+        RwRenderStateSet(11, (void*)2);
+        InitSpriteBuffer();
+
+        bool debugDrawn = false;
+        if(DebugSpriteScreenSpace)
+        {
+            screenpos = { ScreenWidthFallback * 0.5f, ScreenHeightFallback * 0.5f, 1.0f };
+            RenderBufferedOneXLUSprite(screenpos, DebugSpriteSize, DebugSpriteSize, 255, 32, 32, 255, 1.0f, 255);
+            debugDrawn = true;
+        }
+        else
+        {
+            worldpos = *CamPos;
+            worldpos.y += DebugSpriteDistance;
+            worldpos.z += 20.0f;
+            if(CalcScreenCoors(&worldpos, &screenpos, &szx, &szy, false))
+            {
+                if(!hasJPatch15) szx /= *ms_fAspectRatio;
+                RenderBufferedOneXLUSprite(screenpos, szx * DebugSpriteSize, szy * DebugSpriteSize, 255, 32, 32, 255, 1.0f / screenpos.z, 255);
+                debugDrawn = true;
+            }
+        }
+
+        FlushSpriteBuffer();
+        if(LogRenderHook && (RenderHookCounter == 1 || (RenderHookCounter % 300) == 0))
+        {
+            GTA3SKIES_LOG("debugSprite=%d screenSpace=%d screen=(%.1f %.1f %.3f) size=%.1f",
+                          debugDrawn,
+                          DebugSpriteScreenSpace,
+                          screenpos.x,
+                          screenpos.y,
+                          screenpos.z,
+                          DebugSpriteSize);
+        }
+    }
+  #endif
     
     RwRenderStateSet(8, (void*)1);
     RwRenderStateSet(6, (void*)1);
@@ -582,7 +631,11 @@ extern "C" void OnModLoad()
     LogRenderHook = cfg->GetBool("LogRenderHook", true);
     LogCameraCandidates = cfg->GetBool("LogCameraCandidates", true);
     RenderFluffyClouds = cfg->GetBool("RenderFluffyClouds", false);
+    DebugSprite = cfg->GetBool("DebugSprite", true);
+    DebugSpriteScreenSpace = cfg->GetBool("DebugSpriteScreenSpace", false);
     CameraPosOffset = cfg->GetInt("CameraPosOffset", 0x30);
+    DebugSpriteDistance = cfg->GetFloat("DebugSpriteDistance", 120.0f);
+    DebugSpriteSize = cfg->GetFloat("DebugSpriteSize", 80.0f);
     ScreenWidthFallback = cfg->GetFloat("ScreenWidth", 2340.0f);
     ScreenHeightFallback = cfg->GetFloat("ScreenHeight", 1080.0f);
     if(ScreenWidthFallback > 1.0f && ScreenHeightFallback > 1.0f)
@@ -602,7 +655,7 @@ extern "C" void OnModLoad()
     
   #ifdef GTA3_TARGET
     HOOK(RenderClouds, aml->GetSym(hGame, "_Z11RenderScenev"));
-    GTA3SKIES_LOG("Loaded. pGame=%p hGame=%p RenderScene=%p aspect=%.3f cameraOffset=0x%X ForceVisibleClouds=%d RenderFluffyClouds=%d LogRenderHook=%d",
+    GTA3SKIES_LOG("Loaded. pGame=%p hGame=%p RenderScene=%p aspect=%.3f cameraOffset=0x%X ForceVisibleClouds=%d RenderFluffyClouds=%d DebugSprite=%d screenSpace=%d LogRenderHook=%d",
                   (void*)pGame,
                   hGame,
                   (void*)aml->GetSym(hGame, "_Z11RenderScenev"),
@@ -610,6 +663,8 @@ extern "C" void OnModLoad()
                   CameraPosOffset,
                   ForceVisibleClouds,
                   RenderFluffyClouds,
+                  DebugSprite,
+                  DebugSpriteScreenSpace,
                   LogRenderHook);
   #else
     HOOKBL(RenderClouds, pGame + BYBIT(0x14EA6E + 0x1, 0x1FA750)); // RenderScene
