@@ -36,16 +36,40 @@ static float AspectRatioFallback = 4.0f / 3.0f;
 static float ScreenWidthFallback = 2340.0f;
 static float ScreenHeightFallback = 1080.0f;
 static uint32_t MoonSizeFallback = 0;
-static bool ForceVisibleClouds = true;
+static bool ForceVisibleClouds = false;
 static bool LogRenderHook = true;
-static bool LogCameraCandidates = true;
-static bool RenderFluffyClouds = false;
-static bool DebugSprite = true;
+static bool LogCameraCandidates = false;
+static bool RenderFluffyClouds = true;
+static bool DebugSprite = false;
 static bool DebugSpriteScreenSpace = false;
-static uint32_t CameraPosOffset = 0x30;
+static bool GTA3ScreenSpaceLowClouds = false;
+static bool GTA3LowCloudUseCoronaTexture = false;
+static bool GTA3DrawLowCloudsInBackground = false;
+static bool GTA3DrawCloudsAfterScene = false;
+static bool GTA3DrawCloudsInHorizon = false;
+static bool GTA3DrawSkyBeforeWorld = true;
+static bool GTA3MoonMovesWithTime = false;
+static uint32_t CameraPosOffset = 0x34;
 static float DebugSpriteDistance = 120.0f;
 static float DebugSpriteSize = 80.0f;
+static float GTA3LowCloudScreenY = 0.18f;
+static float GTA3LowCloudWidth = 650.0f;
+static float GTA3LowCloudHeight = 110.0f;
+static float GTA3LowCloudDriftSpeed = 0.012f;
+static float GTA3CelestialCloudFadeScale = 0.65f;
+static float GTA3MovingMoonDistance = 150.0f;
+static float GTA3MovingMoonHeightScale = 50.0f;
+static bool GTA3UseRe3LowClouds = true;
+static float GTA3Re3LowCloudDistanceScale = 800.0f;
+static float GTA3Re3LowCloudBaseZ = 40.0f;
+static float GTA3Re3LowCloudZScale = 60.0f;
+static float GTA3Re3LowCloudWidthScale = 320.0f;
+static float GTA3Re3LowCloudHeightScale = 40.0f;
+static int32_t GTA3LowCloudAlpha = 255;
 static uint32_t RenderHookCounter = 0;
+static uint32_t BackgroundHookCounter = 0;
+static uint32_t HorizonHookCounter = 0;
+static uint32_t BeforeWorldHookCounter = 0;
 #endif
 
 #include "SimpleGTA.h"
@@ -59,6 +83,241 @@ static uint32_t RenderHookCounter = 0;
 #endif
 
 
+
+#ifdef GTA3_TARGET
+extern float LowCloudsX[12];
+extern float LowCloudsY[12];
+extern float LowCloudsZ[12];
+extern float CoorsOffsetX[37];
+extern float CoorsOffsetY[37];
+extern float CoorsOffsetZ[37];
+
+static void GTA3RenderCloudLayer(int& lowCloudSprites, int& fluffyCloudSprites);
+static void GTA3RenderSkyLayer(int& lowCloudSprites, int& fluffyCloudSprites);
+
+static float GTA3GetScreenWidth()
+{
+    return (RsGlobal && RsGlobal->x > 1) ? (float)RsGlobal->x : ScreenWidthFallback;
+}
+
+static float GTA3GetScreenHeight()
+{
+    return (RsGlobal && RsGlobal->y > 1) ? (float)RsGlobal->y : ScreenHeightFallback;
+}
+
+static uint8_t ClampToByte(int32_t value)
+{
+    if(value < 0) return 0;
+    if(value > 255) return 255;
+    return (uint8_t)value;
+}
+
+static void GTA3ForceLowCloudColour(int& r, int& g, int& b, float& lowcintens)
+{
+    if(lowcintens < 0.65f) lowcintens = 0.65f;
+    if(r + g + b < 60)
+    {
+        r = 190;
+        g = 190;
+        b = 190;
+    }
+}
+
+static void GTA3RenderScreenSpaceLowClouds(int r, int g, int b, int& lowCloudSprites)
+{
+    if(!GTA3ScreenSpaceLowClouds || !gpCloudTex || !gpCoronaTexture) return;
+
+    RwRenderStateSet(8, (void*)0);
+    RwRenderStateSet(6, (void*)GTA3DrawCloudsAfterScene);
+    RwRenderStateSet(12, (void*)1);
+    RwRenderStateSet(10, (void*)2);
+    RwRenderStateSet(11, (void*)2);
+    InitSpriteBuffer();
+
+    const float screenW = GTA3GetScreenWidth();
+    const float screenH = GTA3GetScreenHeight();
+    const float xNorms[12] = { 0.04f, 0.16f, 0.29f, 0.41f, 0.54f, 0.67f, 0.80f, 0.93f, 0.10f, 0.35f, 0.61f, 0.86f };
+    const float yOffsets[12] = { 0.00f, 0.03f, -0.02f, 0.02f, -0.01f, 0.04f, 0.00f, 0.03f, 0.09f, 0.08f, 0.10f, 0.07f };
+    const float sizeScales[12] = { 1.08f, 0.88f, 1.18f, 0.96f, 1.12f, 0.84f, 1.06f, 0.94f, 0.78f, 0.90f, 0.82f, 0.86f };
+    const float drift = m_snTimeInMilliseconds ? fmodf((float)(*m_snTimeInMilliseconds) * GTA3LowCloudDriftSpeed, screenW) : 0.0f;
+    const float baseY = screenH * GTA3LowCloudScreenY;
+    const uint8_t cr = ClampToByte(r);
+    const uint8_t cg = ClampToByte(g);
+    const uint8_t cb = ClampToByte(b);
+    const short alpha = (short)ClampToByte(GTA3LowCloudAlpha);
+
+    RwRenderStateSet(1, GTA3LowCloudUseCoronaTexture ? *(gpCoronaTexture[0]) : *(gpCloudTex[0]));
+    for(int i = 0; i < 12; ++i)
+    {
+        float x = fmodf(xNorms[i] * screenW + drift, screenW);
+        if(x < 0.0f) x += screenW;
+        RwV3d screenpos = { x, baseY + yOffsets[i] * screenH, 1.0f };
+
+        const float width = GTA3LowCloudWidth * sizeScales[i];
+        const float height = GTA3LowCloudHeight * (0.80f + 0.06f * (float)(i % 4));
+        const float rotation = ((i & 1) ? 0.045f : -0.035f) + *ms_cameraRoll;
+        RenderBufferedOneXLUSprite_Rotate_Dimension(screenpos, width, height, cr, cg, cb, alpha, 1.0f, rotation, 255);
+        ++lowCloudSprites;
+
+        if(x < width * 0.5f || x > screenW - width * 0.5f)
+        {
+            screenpos.x = (x < screenW * 0.5f) ? x + screenW : x - screenW;
+            RenderBufferedOneXLUSprite_Rotate_Dimension(screenpos, width, height, cr, cg, cb, alpha, 1.0f, rotation, 255);
+            ++lowCloudSprites;
+        }
+    }
+    FlushSpriteBuffer();
+}
+
+static void GTA3RenderRe3LowClouds(int r, int g, int b, int& lowCloudSprites)
+{
+    if(!gpCloudTex || !CamPos) return;
+
+    RwRenderStateSet(8, (void*)0);
+    RwRenderStateSet(6, (void*)0);
+    RwRenderStateSet(12, (void*)1);
+    RwRenderStateSet(10, (void*)2);
+    RwRenderStateSet(11, (void*)2);
+    InitSpriteBuffer();
+
+    const uint8_t cr = ClampToByte(r);
+    const uint8_t cg = ClampToByte(g);
+    const uint8_t cb = ClampToByte(b);
+    const short alpha = (short)ClampToByte(GTA3LowCloudAlpha);
+
+    for(int cloudtype = 0; cloudtype < 3; ++cloudtype)
+    {
+        RwRenderStateSet(1, *(gpCloudTex[cloudtype]));
+        for(int i = cloudtype; i < 12; i += 3)
+        {
+            RwV3d worldpos = {
+                CamPos->x + GTA3Re3LowCloudDistanceScale * LowCloudsX[i],
+                CamPos->y + GTA3Re3LowCloudDistanceScale * LowCloudsY[i],
+                GTA3Re3LowCloudBaseZ + GTA3Re3LowCloudZScale * LowCloudsZ[i]
+            };
+
+            RwV3d screenpos;
+            float szx, szy;
+            if(CalcScreenCoors(&worldpos, &screenpos, &szx, &szy, false))
+            {
+                if(!hasJPatch15) szx /= *ms_fAspectRatio;
+                RenderBufferedOneXLUSprite_Rotate_Dimension(screenpos,
+                                                            szx * GTA3Re3LowCloudWidthScale,
+                                                            szy * GTA3Re3LowCloudHeightScale,
+                                                            cr, cg, cb, alpha,
+                                                            1.0f / screenpos.z,
+                                                            *ms_cameraRoll,
+                                                            255);
+                ++lowCloudSprites;
+            }
+        }
+        FlushSpriteBuffer();
+    }
+}
+
+static void GTA3RenderRe3FluffyClouds(float coverage, float decoverage, int& fluffyCloudSprites)
+{
+    if(!RenderFluffyClouds || !gpCloudTex || !CamPos) return;
+
+    float screenW = GTA3GetScreenWidth();
+    float distLimit = screenW * 0.5f;
+    float sundistBlocked = screenW * 0.1f;
+    float sundistHilit = screenW * 0.333333f;
+
+    static bool bCloudOnScreen[37];
+    static float fSunDist[37];
+    static float fCloudHighlight[37];
+
+    int fluffyalpha = 160 * (1.0f - *Foggyness);
+    if(fluffyalpha <= 0) return;
+
+    float rot_sin = sinf(*CloudRotation);
+    float rot_cos = cosf(*CloudRotation);
+    float rotationValue = ((2.0f * M_PI) * (uint16_t)*IndividualRotation) / 65536.0f + *ms_cameraRoll;
+
+    RwRenderStateSet(8, (void*)0);
+    RwRenderStateSet(6, (void*)0);
+    RwRenderStateSet(12, (void*)1);
+    RwRenderStateSet(10, (void*)5);
+    RwRenderStateSet(11, (void*)6);
+    RwRenderStateSet(1, *(gpCloudTex[4]));
+    InitSpriteBuffer();
+
+    for(int i = 0; i < 37; ++i)
+    {
+        RwV3d pos = { 2.0f * CoorsOffsetX[i], 2.0f * CoorsOffsetY[i], 40.0f * CoorsOffsetZ[i] + 40.0f };
+        RwV3d worldpos = {
+            pos.x * rot_cos + pos.y * rot_sin + CamPos->x,
+            pos.x * rot_sin - pos.y * rot_cos + CamPos->y,
+            pos.z
+        };
+
+        RwV3d screenpos;
+        float szx, szy;
+        if(CalcScreenCoors(&worldpos, &screenpos, &szx, &szy, false))
+        {
+            float sunDx = screenpos.x - *SunScreenX;
+            float sunDy = screenpos.y - *SunScreenY;
+            fSunDist[i] = sqrtf(sunDx * sunDx + sunDy * sunDy);
+            fCloudHighlight[i] = 0.0f;
+
+            int tr = *m_nCurrentFluffyCloudsTopRed;
+            int tg = *m_nCurrentFluffyCloudsTopGreen;
+            int tb = *m_nCurrentFluffyCloudsTopBlue;
+            int br = *m_nCurrentFluffyCloudsBottomRed;
+            int bg = *m_nCurrentFluffyCloudsBottomGreen;
+            int bb = *m_nCurrentFluffyCloudsBottomBlue;
+
+            if(fSunDist[i] < distLimit)
+            {
+                fCloudHighlight[i] = decoverage * (1.0f - fSunDist[i] / distLimit);
+                tr = tr * (1.0f - fCloudHighlight[i]) + 255 * fCloudHighlight[i];
+                tg = tg * (1.0f - fCloudHighlight[i]) + 190 * fCloudHighlight[i];
+                tb = tb * (1.0f - fCloudHighlight[i]) + 190 * fCloudHighlight[i];
+                br = br * (1.0f - fCloudHighlight[i]) + 255 * fCloudHighlight[i];
+                bg = bg * (1.0f - fCloudHighlight[i]) + 190 * fCloudHighlight[i];
+                bb = bb * (1.0f - fCloudHighlight[i]) + 190 * fCloudHighlight[i];
+                if(fSunDist[i] < sundistBlocked) *SunBlockedByClouds = (fluffyalpha > 50);
+            }
+
+            if(!hasJPatch15) szx /= *ms_fAspectRatio;
+            RenderBufferedOneXLUSprite_Rotate_2Colours(screenpos, szx * 55.0f, szy * 55.0f, tr, tg, tb, br, bg, bb, 0.0f, -1.0f, 1.0f / screenpos.z, rotationValue, fluffyalpha);
+            ++fluffyCloudSprites;
+            bCloudOnScreen[i] = true;
+        }
+        else
+        {
+            bCloudOnScreen[i] = false;
+        }
+    }
+    FlushSpriteBuffer();
+
+    RwRenderStateSet(10, (void*)2);
+    RwRenderStateSet(11, (void*)2);
+    RwRenderStateSet(1, *(gpCloudTex[3]));
+    InitSpriteBuffer();
+    for(int i = 0; i < 37; ++i)
+    {
+        RwV3d pos = { 2.0f * CoorsOffsetX[i], 2.0f * CoorsOffsetY[i], 40.0f * CoorsOffsetZ[i] + 40.0f };
+        RwV3d worldpos = {
+            pos.x * rot_cos + pos.y * rot_sin + CamPos->x,
+            pos.x * rot_sin - pos.y * rot_cos + CamPos->y,
+            pos.z
+        };
+
+        RwV3d screenpos;
+        float szx, szy;
+        if(bCloudOnScreen[i] && fSunDist[i] < sundistHilit && CalcScreenCoors(&worldpos, &screenpos, &szx, &szy, false))
+        {
+            if(!hasJPatch15) szx /= *ms_fAspectRatio;
+            RenderBufferedOneXLUSprite_Rotate_Aspect(screenpos, szx * 30.0f, szy * 30.0f, 200 * fCloudHighlight[i], 0, 0, 255, 1.0f / screenpos.z,
+                                                     1.7f - GetATanOfXY(screenpos.x - *SunScreenX, screenpos.y - *SunScreenY) + *ms_cameraRoll, 255);
+        }
+    }
+    FlushSpriteBuffer();
+}
+
+#endif
 
 #ifdef GTA3_TARGET
 MYMOD(net.icepie.gta3skies, GTA3Skies, 0.1, icepie)
@@ -106,6 +365,232 @@ uint16_t pShootingStarIndices[] = { 0, 1 };
 
 CVector MoonVector;
 inline float SQR(float v) { return v*v; }
+
+#ifdef GTA3_TARGET
+DECL_HOOKv(RenderBackground, short topred, short topgreen, short topblue, short botred, short botgreen, short botblue, short alpha)
+{
+    RenderBackground(topred, topgreen, topblue, botred, botgreen, botblue, alpha);
+    ++BackgroundHookCounter;
+
+    if(LogRenderHook && (BackgroundHookCounter == 1 || (BackgroundHookCounter % 300) == 0))
+    {
+        GTA3SKIES_LOG("background=%u fog=%.2f cloud=%.2f",
+                      BackgroundHookCounter,
+                      Foggyness ? *Foggyness : 0.0f,
+                      CloudCoverage ? *CloudCoverage : 0.0f);
+    }
+}
+
+static void GTA3RenderCloudLayer(int& lowCloudSprites, int& fluffyCloudSprites)
+{
+    if(!CanSeeOutSideFromCurrArea()) return;
+
+    float coverage = fmaxf(*Foggyness, *CloudCoverage);
+    float decoverage = 1.0f - coverage;
+
+    float lowcintens = 1.0f - fmaxf(coverage, *ExtraSunnyness);
+    int r = *m_nCurrentLowCloudsRed * lowcintens;
+    int g = *m_nCurrentLowCloudsGreen * lowcintens;
+    int b = *m_nCurrentLowCloudsBlue * lowcintens;
+
+    if(GTA3ScreenSpaceLowClouds) GTA3RenderScreenSpaceLowClouds(r, g, b, lowCloudSprites);
+    else GTA3RenderRe3LowClouds(r, g, b, lowCloudSprites);
+    GTA3RenderRe3FluffyClouds(coverage, decoverage, fluffyCloudSprites);
+}
+
+static void GTA3RenderSkyLayer(int& lowCloudSprites, int& fluffyCloudSprites)
+{
+    if(!CanSeeOutSideFromCurrArea() || !CamPos) return;
+
+    float szx, szy;
+    RwV3d screenpos;
+    RwV3d worldpos;
+
+    RwRenderStateSet(8, (void*)0);
+    RwRenderStateSet(6, (void*)0);
+    RwRenderStateSet(12, (void*)1);
+    RwRenderStateSet(10, (void*)2);
+    RwRenderStateSet(11, (void*)2);
+    InitSpriteBuffer();
+
+    *SunBlockedByClouds = false;
+    float coverage = fmaxf(*Foggyness, *CloudCoverage);
+    float decoverage = 1.0f - coverage;
+    float celestialCoverage = fmaxf(*Foggyness, *CloudCoverage * GTA3CelestialCloudFadeScale);
+    if(celestialCoverage > 1.0f) celestialCoverage = 1.0f;
+    float celestialVisibility = 1.0f - celestialCoverage;
+
+    if(celestialVisibility > 0.0f && (*ms_nGameClockHours >= STARS_STARTHOUR || *ms_nGameClockHours <= START_LASTHOUR))
+    {
+        float brightness = 255.0f * celestialVisibility;
+        if(*ms_nGameClockHours == STARS_STARTHOUR) brightness *= (0.0166667f * *ms_nGameClockMinutes);
+        else if(*ms_nGameClockHours == START_LASTHOUR) brightness *= (0.0166667f * (60 - *ms_nGameClockMinutes));
+
+        RwRenderStateSet(1, *(gpCoronaTexture[0]));
+      #ifdef STARRY_SKIES
+        StarrySkies_Patch(brightness);
+      #else
+        for(int i = 0; i < 11; ++i)
+        {
+            RwV3d pos = { 100.0f, 0.0f, 10.0f };
+            if(i >= 9) pos.x = -pos.x;
+            worldpos = pos + *CamPos;
+            worldpos.y -= 90.0f * StarCoorsX[i % 9];
+            worldpos.z += 80.0f * StarCoorsY[i % 9];
+
+            if(CalcScreenCoors(&worldpos, &screenpos, &szx, &szy, false))
+            {
+                float sz = 0.8f * StarSizes[i % 9];
+                if(!hasJPatch15) szx /= *ms_fAspectRatio;
+                RenderBufferedOneXLUSprite(screenpos, szx * sz, szy * sz, brightness, brightness, brightness, 255, 1.0f / screenpos.z, 255);
+            }
+        }
+      #endif
+        FlushSpriteBuffer();
+    }
+
+    float minute = 60.0f * *ms_nGameClockHours + *ms_nGameClockMinutes;
+    int moonfadeout = (int)(fabsf(minute - 180.0f));
+    if(moonfadeout < 180)
+    {
+        RwV3d pos = { 0.0f, -100.0f, 15.0f };
+        if(GTA3MoonMovesWithTime)
+        {
+            const float t = minute / 1440.0f;
+            const float angle = (t * 2.0f * M_PI) + M_PI;
+            const float height = sinf((t - 0.125f) * 2.0f * M_PI);
+            pos.x = cosf(angle) * GTA3MovingMoonDistance;
+            pos.y = sinf(angle) * GTA3MovingMoonDistance;
+            pos.z = 15.0f + height * GTA3MovingMoonHeightScale;
+        }
+        worldpos = pos + *CamPos;
+        if(CalcScreenCoors(&worldpos, &screenpos, &szx, &szy, false))
+        {
+            RwRenderStateSet(1, *(gpCoronaTexture[2]));
+            int brightness = celestialVisibility * (180 - moonfadeout);
+            float sz = *MoonSize * 2.0f + 4.0f;
+            if(!hasJPatch15) szx /= *ms_fAspectRatio;
+            RenderBufferedOneXLUSprite(screenpos, szx * sz, szy * sz, brightness, brightness, brightness, 255, 1.0f / screenpos.z, 255);
+            FlushSpriteBuffer();
+        }
+    }
+
+    GTA3RenderCloudLayer(lowCloudSprites, fluffyCloudSprites);
+
+    if(*Rainbow != 0)
+    {
+        RwRenderStateSet(1, *(gpCoronaTexture[0]));
+        RwRenderStateSet(10, (void*)2);
+        RwRenderStateSet(11, (void*)2);
+        InitSpriteBuffer();
+        for(int i = 0; i < 6; ++i)
+        {
+            RwV3d pos = { i * 1.5f, 100.0f, 5.0f };
+            worldpos = pos + *CamPos;
+            if(CalcScreenCoors(&worldpos, &screenpos, &szx, &szy, false))
+            {
+                if(!hasJPatch15) szx /= *ms_fAspectRatio;
+                RenderBufferedOneXLUSprite(screenpos, 2.0f * szx, 50.0f * szy, BowRed[i] * *Rainbow, BowGreen[i] * *Rainbow, BowBlue[i] * *Rainbow, 255, 1.0f / screenpos.z, 255);
+            }
+        }
+        FlushSpriteBuffer();
+    }
+
+    if(*NewWeatherType == 0 || *NewWeatherType == 4)
+    {
+        uint32_t time = *m_snTimeInMilliseconds;
+        uint32_t phase = (time & 0x1FFF);
+        if(phase < 800)
+        {
+            float tail = (400 - phase) + (400 - phase);
+            Skies_TempBufferRenderVertices[0].color = 0xE1FFFFFF;
+            Skies_TempBufferRenderVertices[1].color = 0x00FFFFFF;
+
+            uint32_t seed = (time >> 13) & 0x3F;
+            CVector starScale{ 0.1f * (seed % 7 - 3), 0.1f * ((time >> 13) - 4), 1.0f };
+            starScale.Normalise();
+            CVector starDir{ (float)(seed % 9 - 5), (float)(seed % 10 - 5), 0.1f };
+            starDir.Normalise();
+
+            worldpos = *CamPos + starDir * 1000.0f;
+            Skies_TempBufferRenderVertices[0].pos = worldpos + starScale * tail;
+            Skies_TempBufferRenderVertices[1].pos = worldpos + starScale * (tail + 50.0f);
+
+            RwRenderStateSet(1, (void*)0);
+            RwRenderStateSet(10, (void*)5);
+            RwRenderStateSet(11, (void*)6);
+            if(RwIm3DTransform(Skies_TempBufferRenderVertices, 2, NULL, 0x10 | 0x8))
+            {
+                RwIm3DRenderIndexedPrimitive(2, pShootingStarIndices, 2);
+                RwIm3DEnd();
+            }
+        }
+    }
+
+    RwRenderStateSet(8, (void*)1);
+    RwRenderStateSet(6, (void*)1);
+    RwRenderStateSet(12, (void*)0);
+    RwRenderStateSet(10, (void*)5);
+    RwRenderStateSet(11, (void*)6);
+}
+
+DECL_HOOKv(RenderHorizon)
+{
+    ++HorizonHookCounter;
+    RenderHorizon();
+
+    if(LogRenderHook && (HorizonHookCounter == 1 || (HorizonHookCounter % 300) == 0))
+    {
+        GTA3SKIES_LOG("horizon=%u weather=%d/%d fog=%.2f cloud=%.2f cam=(%.1f %.1f %.1f)",
+                      HorizonHookCounter,
+                      NewWeatherType ? *NewWeatherType : -1,
+                      OldWeatherType ? *OldWeatherType : -1,
+                      Foggyness ? *Foggyness : 0.0f,
+                      CloudCoverage ? *CloudCoverage : 0.0f,
+                      CamPos ? CamPos->x : 0.0f,
+                      CamPos ? CamPos->y : 0.0f,
+                      CamPos ? CamPos->z : 0.0f);
+    }
+}
+
+DECL_HOOKv(RenderEverythingBarRoads)
+{
+    ++BeforeWorldHookCounter;
+
+    int lowCloudSprites = 0;
+    int fluffyCloudSprites = 0;
+    if(GTA3DrawSkyBeforeWorld)
+    {
+        GTA3RenderSkyLayer(lowCloudSprites, fluffyCloudSprites);
+    }
+
+    if(LogRenderHook && (BeforeWorldHookCounter == 1 || (BeforeWorldHookCounter % 300) == 0))
+    {
+        GTA3SKIES_LOG("beforeWorld=%u low=%d fluffy=%d draw=%d weather=%d/%d fog=%.2f cloud=%.2f lowRGB=(%d,%d,%d) fluffyTop=(%d,%d,%d) cam=(%.1f %.1f %.1f)",
+                      BeforeWorldHookCounter,
+                      lowCloudSprites,
+                      fluffyCloudSprites,
+                      GTA3DrawSkyBeforeWorld,
+                      NewWeatherType ? *NewWeatherType : -1,
+                      OldWeatherType ? *OldWeatherType : -1,
+                      Foggyness ? *Foggyness : 0.0f,
+                      CloudCoverage ? *CloudCoverage : 0.0f,
+                      m_nCurrentLowCloudsRed ? *m_nCurrentLowCloudsRed : 0,
+                      m_nCurrentLowCloudsGreen ? *m_nCurrentLowCloudsGreen : 0,
+                      m_nCurrentLowCloudsBlue ? *m_nCurrentLowCloudsBlue : 0,
+                      m_nCurrentFluffyCloudsTopRed ? *m_nCurrentFluffyCloudsTopRed : 0,
+                      m_nCurrentFluffyCloudsTopGreen ? *m_nCurrentFluffyCloudsTopGreen : 0,
+                      m_nCurrentFluffyCloudsTopBlue ? *m_nCurrentFluffyCloudsTopBlue : 0,
+                      CamPos ? CamPos->x : 0.0f,
+                      CamPos ? CamPos->y : 0.0f,
+                      CamPos ? CamPos->z : 0.0f);
+    }
+
+    RenderEverythingBarRoads();
+}
+
+#endif
+
 DECL_HOOKv(RenderClouds)
 {
   #ifdef GTA3_TARGET
@@ -113,17 +598,31 @@ DECL_HOOKv(RenderClouds)
     ++RenderHookCounter;
     if(LogRenderHook && RenderHookCounter == 1)
     {
-        GTA3SKIES_LOG("RenderScene hook hit. RsGlobal=%p TheCamera=%p CamPos=%p gpCloudTex=%p gpCoronaTexture=%p",
+        GTA3SKIES_LOG("Cloud render hook hit. RsGlobal=%p TheCamera=%p CamPos=%p gpCloudTex=%p gpCoronaTexture=%p",
                       RsGlobal, TheCamera, CamPos, gpCloudTex, gpCoronaTexture);
     }
     if(LogCameraCandidates && RenderHookCounter == 1 && TheCamera)
     {
-        const uint32_t offsets[] = { 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0 };
+        const uint32_t offsets[] = { 0x30, 0x34, 0x40, 0x44, 0x50, 0x54, 0x60, 0x64, 0x70, 0x74, 0x80, 0x84, 0x90, 0x94, 0xA0, 0xA4, 0xB0, 0xB4, 0xC0, 0xC4 };
         for(uint32_t offset : offsets)
         {
             CVector* candidate = (CVector*)(TheCamera + offset);
             GTA3SKIES_LOG("TheCamera+0x%X = (%.2f %.2f %.2f)", offset, candidate->x, candidate->y, candidate->z);
         }
+    }
+    if(GTA3DrawCloudsInHorizon || GTA3DrawSkyBeforeWorld)
+    {
+        if(LogRenderHook && (RenderHookCounter == 1 || (RenderHookCounter % 300) == 0))
+        {
+            GTA3SKIES_LOG("frame=%u skyMovedBeforeWorld=%d skyMovedToHorizon=%d cam=(%.1f %.1f %.1f)",
+                          RenderHookCounter,
+                          GTA3DrawSkyBeforeWorld,
+                          GTA3DrawCloudsInHorizon,
+                          CamPos ? CamPos->x : 0.0f,
+                          CamPos ? CamPos->y : 0.0f,
+                          CamPos ? CamPos->z : 0.0f);
+        }
+        return;
     }
   #endif
 
@@ -133,7 +632,10 @@ DECL_HOOKv(RenderClouds)
     int lowCloudSprites = 0;
     int fluffyCloudSprites = 0;
     
-    if(!CanSeeOutSideFromCurrArea()) return;
+    if(!CanSeeOutSideFromCurrArea())
+    {
+        return;
+    }
     
     RwRenderStateSet(8, (void*)0);
     RwRenderStateSet(6, (void*)0);
@@ -233,14 +735,16 @@ DECL_HOOKv(RenderClouds)
   #ifdef GTA3_TARGET
     if(ForceVisibleClouds)
     {
-        if(lowcintens < 0.65f) lowcintens = 0.65f;
-        if(r + g + b < 60)
-        {
-            r = 190;
-            g = 190;
-            b = 190;
-        }
+        GTA3ForceLowCloudColour(r, g, b, lowcintens);
     }
+  #endif
+  #ifdef GTA3_TARGET
+    if(!GTA3DrawLowCloudsInBackground && !GTA3DrawCloudsInHorizon)
+    {
+        if(GTA3ScreenSpaceLowClouds) GTA3RenderScreenSpaceLowClouds(r, g, b, lowCloudSprites);
+        else GTA3RenderRe3LowClouds(r, g, b, lowCloudSprites);
+    }
+    else if(!GTA3DrawCloudsInHorizon)
   #endif
     for(int cloudtype = 0; cloudtype < 3; ++cloudtype)
     {
@@ -264,7 +768,7 @@ DECL_HOOKv(RenderClouds)
     // Fluffy Clouds
     if(coverage < 1
       #ifdef GTA3_TARGET
-        && RenderFluffyClouds
+        && RenderFluffyClouds && !GTA3DrawCloudsInHorizon
       #endif
     )
     {
@@ -293,7 +797,7 @@ DECL_HOOKv(RenderClouds)
         {
             RwV3d pos = { 2.0f*CoorsOffsetX[i], 2.0f*CoorsOffsetY[i], 40.0f*CoorsOffsetZ[i] + 40.0f };
             worldpos.x = pos.x*rot_cos + pos.y*rot_sin + CamPos->x;
-            worldpos.y = pos.x*rot_sin + pos.y*rot_cos + CamPos->y;
+            worldpos.y = pos.x*rot_sin - pos.y*rot_cos + CamPos->y;
             worldpos.z = pos.z;
             
             if(CalcScreenCoors(&worldpos, &screenpos, &szx, &szy, false))
@@ -353,7 +857,7 @@ DECL_HOOKv(RenderClouds)
         {
             RwV3d pos = { 2.0f * CoorsOffsetX[i], 2.0f * CoorsOffsetY[i], 40.0f * CoorsOffsetZ[i] + 40.0f };
             worldpos.x = pos.x*rot_cos + pos.y*rot_sin + CamPos->x;
-            worldpos.y = pos.x*rot_sin + pos.y*rot_cos + CamPos->y;
+            worldpos.y = pos.x*rot_sin - pos.y*rot_cos + CamPos->y;
             worldpos.z = pos.z;
             
             if(bCloudOnScreen[i] && CalcScreenCoors(&worldpos, &screenpos, &szx, &szy, false) && fSunDist[i] < sundistHilit)
@@ -627,15 +1131,37 @@ extern "C" void OnModLoad()
     ms_fAspectRatio = &AspectRatioFallback;
     ExtraSunnyness = &ExtraSunnynessFallback;
     MoonSize = &MoonSizeFallback;
-    ForceVisibleClouds = cfg->GetBool("ForceVisibleClouds", true);
+    ForceVisibleClouds = cfg->GetBool("ForceVisibleClouds", false);
     LogRenderHook = cfg->GetBool("LogRenderHook", true);
-    LogCameraCandidates = cfg->GetBool("LogCameraCandidates", true);
-    RenderFluffyClouds = cfg->GetBool("RenderFluffyClouds", false);
-    DebugSprite = cfg->GetBool("DebugSprite", true);
+    LogCameraCandidates = cfg->GetBool("LogCameraCandidates", false);
+    RenderFluffyClouds = cfg->GetBool("RenderFluffyClouds", true);
+    DebugSprite = cfg->GetBool("DebugSprite", false);
     DebugSpriteScreenSpace = cfg->GetBool("DebugSpriteScreenSpace", false);
-    CameraPosOffset = cfg->GetInt("CameraPosOffset", 0x30);
+    GTA3ScreenSpaceLowClouds = cfg->GetBool("GTA3ScreenSpaceLowClouds", false);
+    GTA3LowCloudUseCoronaTexture = cfg->GetBool("GTA3LowCloudUseCoronaTexture", false);
+    GTA3DrawLowCloudsInBackground = cfg->GetBool("GTA3DrawLowCloudsInBackground", false);
+    GTA3DrawCloudsAfterScene = cfg->GetBool("GTA3DrawCloudsAfterScene", false);
+    GTA3DrawCloudsInHorizon = cfg->GetBool("GTA3DrawCloudsInHorizon", false);
+    GTA3DrawSkyBeforeWorld = cfg->GetBool("GTA3DrawSkyBeforeWorld", true);
+    GTA3MoonMovesWithTime = cfg->GetBool("GTA3MoonMovesWithTime", false);
+    CameraPosOffset = cfg->GetInt("CameraPosOffset", 0x34);
+    if(CameraPosOffset == 0x30) CameraPosOffset = 0x34;
     DebugSpriteDistance = cfg->GetFloat("DebugSpriteDistance", 120.0f);
     DebugSpriteSize = cfg->GetFloat("DebugSpriteSize", 80.0f);
+    GTA3LowCloudScreenY = cfg->GetFloat("GTA3LowCloudScreenY", 0.18f);
+    GTA3LowCloudWidth = cfg->GetFloat("GTA3LowCloudWidth", 650.0f);
+    GTA3LowCloudHeight = cfg->GetFloat("GTA3LowCloudHeight", 110.0f);
+    GTA3LowCloudDriftSpeed = cfg->GetFloat("GTA3LowCloudDriftSpeed", 0.012f);
+    GTA3CelestialCloudFadeScale = cfg->GetFloat("GTA3CelestialCloudFadeScale", 0.65f);
+    GTA3MovingMoonDistance = cfg->GetFloat("GTA3MovingMoonDistance", 150.0f);
+    GTA3MovingMoonHeightScale = cfg->GetFloat("GTA3MovingMoonHeightScale", 50.0f);
+    GTA3UseRe3LowClouds = cfg->GetBool("GTA3UseRe3LowClouds", true);
+    GTA3Re3LowCloudDistanceScale = cfg->GetFloat("GTA3Re3LowCloudDistanceScale", 800.0f);
+    GTA3Re3LowCloudBaseZ = cfg->GetFloat("GTA3Re3LowCloudBaseZ", 40.0f);
+    GTA3Re3LowCloudZScale = cfg->GetFloat("GTA3Re3LowCloudZScale", 60.0f);
+    GTA3Re3LowCloudWidthScale = cfg->GetFloat("GTA3Re3LowCloudWidthScale", 320.0f);
+    GTA3Re3LowCloudHeightScale = cfg->GetFloat("GTA3Re3LowCloudHeightScale", 40.0f);
+    GTA3LowCloudAlpha = cfg->GetInt("GTA3LowCloudAlpha", 255);
     ScreenWidthFallback = cfg->GetFloat("ScreenWidth", 2340.0f);
     ScreenHeightFallback = cfg->GetFloat("ScreenHeight", 1080.0f);
     if(ScreenWidthFallback > 1.0f && ScreenHeightFallback > 1.0f)
@@ -654,17 +1180,31 @@ extern "C" void OnModLoad()
   #endif
     
   #ifdef GTA3_TARGET
+    HOOK(RenderBackground, aml->GetSym(hGame, "_ZN7CClouds16RenderBackgroundEsssssss"));
+    HOOK(RenderHorizon, aml->GetSym(hGame, "_ZN7CClouds13RenderHorizonEv"));
+    HOOKBL(RenderEverythingBarRoads, pGame + 0x1C0374 + 0x1);
     HOOK(RenderClouds, aml->GetSym(hGame, "_Z11RenderScenev"));
-    GTA3SKIES_LOG("Loaded. pGame=%p hGame=%p RenderScene=%p aspect=%.3f cameraOffset=0x%X ForceVisibleClouds=%d RenderFluffyClouds=%d DebugSprite=%d screenSpace=%d LogRenderHook=%d",
+    GTA3SKIES_LOG("Loaded. pGame=%p hGame=%p RenderBackground=%p RenderHorizon=%p DoRWRenderHorizon=%p RenderEverythingBarRoads=%p RenderScene=%p beforeWorldHook=%p aspect=%.3f cameraOffset=0x%X ForceVisibleClouds=%d RenderFluffyClouds=%d DebugSprite=%d screenSpace=%d LowCloudScreen=%d LowCloudBg=%d LowCloudHorizon=%d SkyBeforeWorld=%d LowCloudCorona=%d MoonMoves=%d LogRenderHook=%d",
                   (void*)pGame,
                   hGame,
+                  (void*)aml->GetSym(hGame, "_ZN7CClouds16RenderBackgroundEsssssss"),
+                  (void*)aml->GetSym(hGame, "_ZN7CClouds13RenderHorizonEv"),
+                  (void*)aml->GetSym(hGame, "_Z17DoRWRenderHorizonv"),
+                  (void*)aml->GetSym(hGame, "_ZN9CRenderer24RenderEverythingBarRoadsEv"),
                   (void*)aml->GetSym(hGame, "_Z11RenderScenev"),
+                  (void*)(pGame + 0x1C0374 + 0x1),
                   AspectRatioFallback,
                   CameraPosOffset,
                   ForceVisibleClouds,
                   RenderFluffyClouds,
                   DebugSprite,
                   DebugSpriteScreenSpace,
+                  GTA3ScreenSpaceLowClouds,
+                  GTA3DrawLowCloudsInBackground,
+                  GTA3DrawCloudsInHorizon,
+                  GTA3DrawSkyBeforeWorld,
+                  GTA3LowCloudUseCoronaTexture,
+                  GTA3MoonMovesWithTime,
                   LogRenderHook);
   #else
     HOOKBL(RenderClouds, pGame + BYBIT(0x14EA6E + 0x1, 0x1FA750)); // RenderScene
