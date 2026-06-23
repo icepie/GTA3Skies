@@ -3,6 +3,7 @@ void (*RwRenderStateSet)(int, void*);
 void (*InitSpriteBuffer)();
 void (*FlushSpriteBuffer)();
 bool (*CalcScreenCoors)(CVector*, CVector*, float*, float*, bool);
+void (*RenderOneXLUSprite)(CVector, float, float, uint8_t, uint8_t, uint8_t, short, float, uint8_t);
 void (*RenderBufferedOneXLUSprite)(CVector, float, float, uint8_t, uint8_t, uint8_t, short, float, uint8_t);
 void (*RenderBufferedOneXLUSprite_Rotate_Dimension)(CVector, float, float, uint8_t, uint8_t, uint8_t, short, float, float, uint8_t);
 void (*RenderBufferedOneXLUSprite_Rotate_Aspect)(CVector, float, float, uint8_t, uint8_t, uint8_t, short, float, float, uint8_t);

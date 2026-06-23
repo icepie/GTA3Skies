@@ -59,6 +59,7 @@ static uint32_t LastRainbowSkyLog = 0;
 static uint32_t LastRainbowCloudLog = 0;
 static uint32_t WetRoadReflectionHookCounter = 0;
 static uint32_t LastWetRoadReflectionLog = 0;
+static uint32_t LastMoonDrawLog = 0;
 static uint32_t CameraPosOffset = 0x34;
 static float DebugSpriteDistance = 120.0f;
 static float DebugSpriteSize = 80.0f;
@@ -710,8 +711,18 @@ static void GTA3RenderSkyLayer(int& lowCloudSprites, int& fluffyCloudSprites)
             int brightness = celestialVisibility * (180 - moonfadeout);
             float sz = *MoonSize * 2.0f + 4.0f;
             GTA3FixSpriteAspect(szx);
-            RenderBufferedOneXLUSprite(screenpos, szx * sz, szy * sz, brightness, brightness, brightness, 255, 1.0f / screenpos.z, 255);
-            FlushSpriteBuffer();
+            float drawW = szx * sz;
+            float drawH = szy * sz;
+            RenderBufferedOneXLUSprite(screenpos, drawW, drawH, brightness, brightness, brightness, 255, 1.0f / screenpos.z, 255);
+            uint32_t now = m_snTimeInMilliseconds ? *m_snTimeInMilliseconds : 0;
+            if(LogRenderHook && now - LastMoonDrawLog > 1000)
+            {
+                LastMoonDrawLog = now;
+                GTA3SKIES_LOG("moon sky draw time=%02u:%02u fade=%d cloud=%.2f celestial=%.2f bright=%d screen=(%.1f %.1f %.2f) base=(%.2f %.2f) draw=(%.2f %.2f) size=%u one=%p buffered=%p",
+                              *ms_nGameClockHours, *ms_nGameClockMinutes, moonfadeout, *CloudCoverage, celestialVisibility, brightness,
+                              screenpos.x, screenpos.y, screenpos.z, szx, szy, drawW, drawH, MoonSize ? *MoonSize : 999,
+                              (void*)RenderOneXLUSprite, (void*)RenderBufferedOneXLUSprite);
+            }
         }
     }
 
@@ -865,7 +876,6 @@ DECL_HOOKv(RenderReflections)
 DECL_HOOKv(RenderClouds)
 {
   #ifdef GTA3_TARGET
-    RenderClouds();
     ++RenderHookCounter;
     if(LogRenderHook && RenderHookCounter == 1)
     {
@@ -993,8 +1003,18 @@ DECL_HOOKv(RenderClouds)
             int brightness = decoverage * (180 - moonfadeout);
           #endif
             GTA3FixSpriteAspect(szx);
-            RenderBufferedOneXLUSprite(screenpos, szx * sz, szy * sz, brightness, brightness, brightness, 255, 1.0f / screenpos.z, 255);
-            FlushSpriteBuffer();
+            float drawW = szx * sz;
+            float drawH = szy * sz;
+            RenderBufferedOneXLUSprite(screenpos, drawW, drawH, brightness, brightness, brightness, 255, 1.0f / screenpos.z, 255);
+            uint32_t now = m_snTimeInMilliseconds ? *m_snTimeInMilliseconds : 0;
+            if(LogRenderHook && now - LastMoonDrawLog > 1000)
+            {
+                LastMoonDrawLog = now;
+                GTA3SKIES_LOG("moon clouds draw time=%02u:%02u fade=%d coverage=%.2f decoverage=%.2f bright=%d screen=(%.1f %.1f %.2f) base=(%.2f %.2f) draw=(%.2f %.2f) size=%u one=%p buffered=%p",
+                              *ms_nGameClockHours, *ms_nGameClockMinutes, moonfadeout, coverage, decoverage, brightness,
+                              screenpos.x, screenpos.y, screenpos.z, szx, szy, drawW, drawH, MoonSize ? *MoonSize : 999,
+                              (void*)RenderOneXLUSprite, (void*)RenderBufferedOneXLUSprite);
+            }
         }
     }
     
@@ -1370,6 +1390,7 @@ extern "C" void OnModLoad()
     SET_TO(InitSpriteBuffer,           aml->GetSym(hGame, "_ZN7CSprite16InitSpriteBufferEv"));
     SET_TO(FlushSpriteBuffer,          aml->GetSym(hGame, "_ZN7CSprite17FlushSpriteBufferEv"));
     SET_TO(CalcScreenCoors,            aml->GetSym(hGame, "_ZN7CSprite15CalcScreenCoorsERK5RwV3dPS0_PfS4_b"));
+    SET_TO(RenderOneXLUSprite,         aml->GetSym(hGame, "_ZN7CSprite18RenderOneXLUSpriteEfffffhhhsfh"));
     SET_TO(RenderBufferedOneXLUSprite, aml->GetSym(hGame, "_ZN7CSprite26RenderBufferedOneXLUSpriteEfffffhhhsfh"));
     SET_TO(RenderBufferedOneXLUSprite_Rotate_Dimension, aml->GetSym(hGame, "_ZN7CSprite43RenderBufferedOneXLUSprite_Rotate_DimensionEfffffhhhsffh"));
     SET_TO(RenderBufferedOneXLUSprite_Rotate_Aspect,    aml->GetSym(hGame, "_ZN7CSprite40RenderBufferedOneXLUSprite_Rotate_AspectEfffffhhhsffh"));
