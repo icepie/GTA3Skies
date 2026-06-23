@@ -51,6 +51,8 @@ static bool GTA3DrawSkyBeforeWorld = true;
 static bool GTA3MoonMovesWithTime = false;
 static bool GTA3FixRainbowUpdate = true;
 static bool GTA3DebugForceRainbow = false;
+static bool GTA3LightningSkyFlash = true;
+static bool GTA3DebugForceLightningFlash = false;
 static uint32_t LastRainbowSkyLog = 0;
 static uint32_t LastRainbowCloudLog = 0;
 static uint32_t CameraPosOffset = 0x34;
@@ -132,6 +134,11 @@ static float GTA3GetWideScreenCorrection()
 static void GTA3FixSpriteAspect(float& szx)
 {
     szx /= GTA3GetWideScreenCorrection();
+}
+
+static bool GTA3ShouldFlashLightning()
+{
+    return GTA3LightningSkyFlash && ((LightningFlash && *LightningFlash) || GTA3DebugForceLightningFlash);
 }
 
 static uint8_t ClampToByte(int32_t value)
@@ -449,15 +456,28 @@ inline float SQR(float v) { return v*v; }
 #ifdef GTA3_TARGET
 DECL_HOOKv(RenderBackground, short topred, short topgreen, short topblue, short botred, short botgreen, short botblue, short alpha)
 {
+    if(GTA3ShouldFlashLightning())
+    {
+        topred = 255;
+        topgreen = 255;
+        topblue = 255;
+        botred = 255;
+        botgreen = 255;
+        botblue = 255;
+    }
+
     RenderBackground(topred, topgreen, topblue, botred, botgreen, botblue, alpha);
     ++BackgroundHookCounter;
 
     if(LogRenderHook && (BackgroundHookCounter == 1 || (BackgroundHookCounter % 300) == 0))
     {
-        GTA3SKIES_LOG("background=%u fog=%.2f cloud=%.2f",
+        GTA3SKIES_LOG("background=%u fog=%.2f cloud=%.2f lightningSky=%d flash=%d forced=%d",
                       BackgroundHookCounter,
                       Foggyness ? *Foggyness : 0.0f,
-                      CloudCoverage ? *CloudCoverage : 0.0f);
+                      CloudCoverage ? *CloudCoverage : 0.0f,
+                      GTA3LightningSkyFlash,
+                      LightningFlash ? (int)*LightningFlash : -1,
+                      GTA3DebugForceLightningFlash);
     }
 }
 
@@ -1241,6 +1261,8 @@ extern "C" void OnModLoad()
     GTA3MoonMovesWithTime = cfg->GetBool("GTA3MoonMovesWithTime", false);
     GTA3FixRainbowUpdate = cfg->GetBool("GTA3FixRainbowUpdate", true);
     GTA3DebugForceRainbow = cfg->GetBool("GTA3DebugForceRainbow", false);
+    GTA3LightningSkyFlash = cfg->GetBool("GTA3LightningSkyFlash", true);
+    GTA3DebugForceLightningFlash = cfg->GetBool("GTA3DebugForceLightningFlash", false);
     CameraPosOffset = cfg->GetInt("CameraPosOffset", 0x34);
     if(CameraPosOffset == 0x30) CameraPosOffset = 0x34;
     DebugSpriteDistance = cfg->GetFloat("DebugSpriteDistance", 120.0f);
@@ -1284,7 +1306,7 @@ extern "C" void OnModLoad()
     HOOKBL(RenderEverythingBarRoads, pGame + 0x1C0374 + 0x1);
     HOOK(RenderClouds, aml->GetSym(hGame, "_Z11RenderScenev"));
     HOOK(GTA3WeatherUpdate, aml->GetSym(hGame, "_ZN8CWeather6UpdateEv"));
-    GTA3SKIES_LOG("Loaded. pGame=%p hGame=%p RenderBackground=%p RenderHorizon=%p DoRWRenderHorizon=%p RenderEverythingBarRoads=%p RenderScene=%p WeatherUpdate=%p beforeWorldHook=%p aspect=%.3f cameraOffset=0x%X ForceVisibleClouds=%d RenderFluffyClouds=%d DebugSprite=%d screenSpace=%d LowCloudScreen=%d LowCloudBg=%d LowCloudHorizon=%d SkyBeforeWorld=%d LowCloudCorona=%d MoonMoves=%d FixRainbow=%d ForceRainbow=%d ForceRainbowValue=%.2f RainbowWorld=(%.1f,%.1f,%.1f) RainbowScale=(%.2f,%.1f) LogRenderHook=%d",
+    GTA3SKIES_LOG("Loaded. pGame=%p hGame=%p RenderBackground=%p RenderHorizon=%p DoRWRenderHorizon=%p RenderEverythingBarRoads=%p RenderScene=%p WeatherUpdate=%p beforeWorldHook=%p aspect=%.3f cameraOffset=0x%X ForceVisibleClouds=%d RenderFluffyClouds=%d DebugSprite=%d screenSpace=%d LowCloudScreen=%d LowCloudBg=%d LowCloudHorizon=%d SkyBeforeWorld=%d LowCloudCorona=%d MoonMoves=%d FixRainbow=%d ForceRainbow=%d ForceRainbowValue=%.2f LightningSky=%d ForceLightning=%d RainbowWorld=(%.1f,%.1f,%.1f) RainbowScale=(%.2f,%.1f) LogRenderHook=%d",
                   (void*)pGame,
                   hGame,
                   (void*)aml->GetSym(hGame, "_ZN7CClouds16RenderBackgroundEsssssss"),
@@ -1309,6 +1331,8 @@ extern "C" void OnModLoad()
                   GTA3FixRainbowUpdate,
                   GTA3DebugForceRainbow,
                   GTA3DebugForceRainbowValue,
+                  GTA3LightningSkyFlash,
+                  GTA3DebugForceLightningFlash,
                   GTA3RainbowWorldX,
                   GTA3RainbowWorldY,
                   GTA3RainbowWorldZ,
