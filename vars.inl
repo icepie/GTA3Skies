@@ -14,7 +14,8 @@ void (*RwIm3DEnd)();
 
 bool *SunBlockedByClouds;
 float *Foggyness, *CloudCoverage, *ms_fAspectRatio, *ExtraSunnyness, *ms_cameraRoll, *CloudRotation, *Rainbow,
-      *SunScreenX, *SunScreenY, *InterpolationValue;
+      *SunScreenX, *SunScreenY, *InterpolationValue, *Rain, *WetRoads;
+bool *LightningFlash, *LightningBurst;
 void ***gpCoronaTexture, ***gpCloudTex;
 uint8_t *ms_nGameClockHours, *ms_nGameClockMinutes, *ms_nGameClockSeconds;
 int32_t *m_nCurrentLowCloudsRed, *m_nCurrentLowCloudsGreen, *m_nCurrentLowCloudsBlue,
