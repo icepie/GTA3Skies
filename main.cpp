@@ -595,6 +595,38 @@ CVector MoonVector;
 inline float SQR(float v) { return v*v; }
 
 #ifdef GTA3_TARGET
+static void GTA3ReloadConfig(Config* cfg)
+{
+    if(!cfg) return;
+    GTA3ScreenSpaceLowClouds = cfg->GetBool("GTA3ScreenSpaceLowClouds", false);
+    GTA3DrawLowCloudsInBackground = cfg->GetBool("GTA3DrawLowCloudsInBackground", false);
+    GTA3DrawCloudsAfterScene = cfg->GetBool("GTA3DrawCloudsAfterScene", false);
+    GTA3DrawCloudsInHorizon = cfg->GetBool("GTA3DrawCloudsInHorizon", false);
+    GTA3DrawSkyBeforeWorld = cfg->GetBool("GTA3DrawSkyBeforeWorld", true);
+    GTA3MoonMovesWithTime = cfg->GetBool("GTA3MoonMovesWithTime", false);
+    GTA3FixRainbowUpdate = cfg->GetBool("GTA3FixRainbowUpdate", true);
+    GTA3DebugForceRainbow = cfg->GetBool("GTA3DebugForceRainbow", false);
+    GTA3LightningSkyFlash = cfg->GetBool("GTA3LightningSkyFlash", true);
+    GTA3DebugForceLightningFlash = cfg->GetBool("GTA3DebugForceLightningFlash", false);
+    GTA3WetRoadReflections = cfg->GetBool("GTA3WetRoadReflections", true);
+    GTA3DebugForceWetRoadReflections = cfg->GetBool("GTA3DebugForceWetRoadReflections", false);
+    GTA3LowCloudHeight = cfg->GetFloat("GTA3LowCloudHeight", 40.0f);
+    GTA3LowCloudWidth = cfg->GetFloat("GTA3LowCloudWidth", 320.0f);
+    GTA3LowCloudScreenY = cfg->GetFloat("GTA3LowCloudScreenY", 0.5f);
+    GTA3LowCloudUseCoronaTexture = cfg->GetBool("GTA3LowCloudUseCoronaTexture", true);
+    GTA3LowCloudDriftSpeed = cfg->GetFloat("GTA3LowCloudDriftSpeed", 0.012f);
+    GTA3CelestialCloudFadeScale = cfg->GetFloat("GTA3CelestialCloudFadeScale", 0.65f);
+    GTA3MovingMoonDistance = cfg->GetFloat("GTA3MovingMoonDistance", 150.0f);
+    GTA3MovingMoonHeightScale = cfg->GetFloat("GTA3MovingMoonHeightScale", 50.0f);
+    GTA3UseRe3LowClouds = cfg->GetBool("GTA3UseRe3LowClouds", true);
+    GTA3Re3LowCloudDistanceScale = cfg->GetFloat("GTA3Re3LowCloudDistanceScale", 800.0f);
+    GTA3Re3LowCloudBaseZ = cfg->GetFloat("GTA3Re3LowCloudBaseZ", 40.0f);
+    GTA3Re3LowCloudZScale = cfg->GetFloat("GTA3Re3LowCloudZScale", 60.0f);
+    GTA3Re3LowCloudWidthScale = cfg->GetFloat("GTA3Re3LowCloudWidthScale", 320.0f);
+    GTA3Re3LowCloudHeightScale = cfg->GetFloat("GTA3Re3LowCloudHeightScale", 40.0f);
+    GTA3LowCloudAlpha = cfg->GetInt("GTA3LowCloudAlpha", 255);
+}
+
 DECL_HOOKv(RenderBackground, short topred, short topgreen, short topblue, short botred, short botgreen, short botblue, short alpha)
 {
     if(GTA3ShouldFlashLightning())
@@ -877,6 +909,17 @@ DECL_HOOKv(RenderClouds)
 {
   #ifdef GTA3_TARGET
     ++RenderHookCounter;
+
+    if(RenderHookCounter % 120 == 0)
+    {
+        #ifdef GTA3_TARGET
+            Config cfgLocal("GTA3Skies"); 
+        #else
+            Config cfgLocal("ViceSkies");
+        #endif
+        GTA3ReloadConfig(&cfgLocal);
+    }
+
     if(LogRenderHook && RenderHookCounter == 1)
     {
         GTA3SKIES_LOG("Cloud render hook hit. RsGlobal=%p TheCamera=%p CamPos=%p gpCloudTex=%p gpCoronaTexture=%p",
@@ -1355,6 +1398,8 @@ __attribute__((optnone)) __attribute__((naked)) void WeatherUpdate_Inject(void)
         "BR              X0\n");
   #endif
 }
+
+
 
 extern "C" void OnModLoad()
 {
