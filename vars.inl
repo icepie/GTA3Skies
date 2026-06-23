@@ -11,6 +11,7 @@ float (*GetATanOfXY)(float, float);
 void* (*RwIm3DTransform)(RwIm3DVertex*, uint32_t, CMatrix*, uint32_t);
 void (*RwIm3DRenderIndexedPrimitive)(uint32_t, uint16_t*, int);
 void (*RwIm3DEnd)();
+bool (*ProcessVerticalLine)(const CVector&, float, void*, void*&, bool, bool, bool, bool, bool, bool, void*);
 
 bool *SunBlockedByClouds;
 float *Foggyness, *CloudCoverage, *ms_fAspectRatio, *ExtraSunnyness, *ms_cameraRoll, *CloudRotation, *Rainbow,

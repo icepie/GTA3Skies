@@ -53,8 +53,12 @@ static bool GTA3FixRainbowUpdate = true;
 static bool GTA3DebugForceRainbow = false;
 static bool GTA3LightningSkyFlash = true;
 static bool GTA3DebugForceLightningFlash = false;
+static bool GTA3WetRoadReflections = true;
+static bool GTA3DebugForceWetRoadReflections = false;
 static uint32_t LastRainbowSkyLog = 0;
 static uint32_t LastRainbowCloudLog = 0;
+static uint32_t WetRoadReflectionHookCounter = 0;
+static uint32_t LastWetRoadReflectionLog = 0;
 static uint32_t CameraPosOffset = 0x34;
 static float DebugSpriteDistance = 120.0f;
 static float DebugSpriteSize = 80.0f;
@@ -112,6 +116,51 @@ uint8_t BowRed[6]   = { 30, 30, 30, 10,  0, 15 };
 uint8_t BowGreen[6] = {  0, 15, 30, 30,  0,  0 };
 uint8_t BowBlue[6]  = {  0,  0,  0, 10, 30, 30 };
 
+struct GTA3ColPoint
+{
+    CVector point;
+    int32_t pad1;
+    CVector normal;
+    int32_t pad2;
+    uint8_t surfaceA;
+    uint8_t pieceA;
+    uint8_t surfaceB;
+    uint8_t pieceB;
+    float depth;
+};
+
+struct GTA3RegisteredCorona
+{
+    uint32_t id;
+    uint32_t lastLOScheck;
+    void* texture;
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+    uint8_t alpha;
+    uint8_t fadeAlpha;
+    CVector coors;
+    float size;
+    float someAngle;
+    bool registeredThisFrame;
+    float drawDist;
+    int8_t flareType;
+    int8_t reflection;
+    uint8_t flags;
+    bool renderReflection;
+    float heightAboveRoad;
+    float prevX[6];
+    float prevY[6];
+    uint8_t prevRed[6];
+    uint8_t prevGreen[6];
+    uint8_t prevBlue[6];
+    bool hasValue[6];
+};
+
+static_assert(sizeof(GTA3RegisteredCorona) == 0x80, "Unexpected CRegisteredCorona layout");
+
+static GTA3RegisteredCorona* GTA3Coronas = nullptr;
+
 static float GTA3GetScreenWidth()
 {
     return (RsGlobal && RsGlobal->x > 1) ? (float)RsGlobal->x : ScreenWidthFallback;
@@ -139,6 +188,19 @@ static void GTA3FixSpriteAspect(float& szx)
 static bool GTA3ShouldFlashLightning()
 {
     return GTA3LightningSkyFlash && ((LightningFlash && *LightningFlash) || GTA3DebugForceLightningFlash);
+}
+
+static float GTA3ClampFloat(float value, float minValue, float maxValue)
+{
+    if(value < minValue) return minValue;
+    if(value > maxValue) return maxValue;
+    return value;
+}
+
+static float GTA3GetWetRoadReflectionStrength()
+{
+    if(GTA3DebugForceWetRoadReflections) return 1.0f;
+    return WetRoads ? *WetRoads : 0.0f;
 }
 
 static uint8_t ClampToByte(int32_t value)
@@ -196,6 +258,84 @@ static void GTA3RenderRainbowLayer(const char* tag, uint32_t& lastLog, CVector* 
                       tag, rainbowSprites, firstScreen.x, firstScreen.y, firstScreen.z, *Rainbow,
                       GTA3RainbowWorldX, GTA3RainbowWorldY, GTA3RainbowWorldZ);
     }
+}
+
+static int GTA3RenderWetRoadReflections()
+{
+    const float wet = GTA3GetWetRoadReflectionStrength();
+    if(wet <= 0.0f || !GTA3Coronas || !gpCoronaTexture || !gpCoronaTexture[3] || !*(gpCoronaTexture[3]) || !ProcessVerticalLine || !CamPos) return 0;
+
+    int reflections = 0;
+    InitSpriteBuffer();
+    RwRenderStateSet(8, (void*)0);
+    RwRenderStateSet(6, (void*)0);
+    RwRenderStateSet(12, (void*)1);
+    RwRenderStateSet(10, (void*)2);
+    RwRenderStateSet(11, (void*)2);
+    RwRenderStateSet(1, *(gpCoronaTexture[3]));
+
+    for(int i = 0; i < 56; ++i)
+    {
+        GTA3RegisteredCorona& corona = GTA3Coronas[i];
+        if(corona.id == 0 || (corona.fadeAlpha == 0 && corona.alpha == 0) || corona.reflection == 0) continue;
+
+        GTA3ColPoint point{};
+        void* entity = nullptr;
+        if(corona.renderReflection)
+        {
+            if(m_snTimeInMilliseconds && (((*m_snTimeInMilliseconds >> 4) + (uint32_t)i) & 0xF) == 0 &&
+               ProcessVerticalLine(corona.coors, -1000.0f, &point, entity, true, false, false, false, true, false, nullptr))
+            {
+                corona.heightAboveRoad = corona.coors.z - point.point.z;
+            }
+        }
+        else if(ProcessVerticalLine(corona.coors, -1000.0f, &point, entity, true, false, false, false, true, false, nullptr))
+        {
+            corona.heightAboveRoad = corona.coors.z - point.point.z;
+            corona.renderReflection = true;
+        }
+
+        if(!corona.renderReflection || corona.heightAboveRoad >= 20.0f) continue;
+        if(corona.coors.z - corona.heightAboveRoad > CamPos->z) continue;
+
+        CVector reflected = corona.coors;
+        reflected.z -= 2.0f * corona.heightAboveRoad;
+
+        CVector screenpos;
+        float spritew, spriteh;
+        if(!CalcScreenCoors(&reflected, &screenpos, &spritew, &spriteh, true)) continue;
+
+        float drawDist = fminf(0.75f * corona.drawDist, 55.0f);
+        if(screenpos.z >= drawDist) continue;
+
+        float fadeDistance = drawDist * 0.5f;
+        float distanceFade = screenpos.z < fadeDistance ? 1.0f : 1.0f - (screenpos.z - fadeDistance) / fadeDistance;
+        distanceFade = GTA3ClampFloat(distanceFade, 0.0f, 1.0f);
+        float heightFade = (20.0f - corona.heightAboveRoad) / 20.0f;
+        int intensity = (int)(distanceFade * heightFade * 230.0f * wet);
+        if(intensity <= 0) continue;
+
+        GTA3FixSpriteAspect(spritew);
+        RenderBufferedOneXLUSprite(screenpos,
+                                   spritew * corona.size * 0.75f,
+                                   spriteh * corona.size * 2.0f,
+                                   (uint8_t)((intensity * corona.red) >> 8),
+                                   (uint8_t)((intensity * corona.green) >> 8),
+                                   (uint8_t)((intensity * corona.blue) >> 8),
+                                   255,
+                                   1.0f / screenpos.z,
+                                   255);
+        ++reflections;
+    }
+
+    FlushSpriteBuffer();
+
+    RwRenderStateSet(10, (void*)5);
+    RwRenderStateSet(11, (void*)6);
+    RwRenderStateSet(12, (void*)0);
+    RwRenderStateSet(8, (void*)1);
+    RwRenderStateSet(6, (void*)1);
+    return reflections;
 }
 
 static void GTA3ForceLowCloudColour(int& r, int& g, int& b, float& lowcintens)
@@ -686,6 +826,38 @@ DECL_HOOKv(RenderEverythingBarRoads)
     }
 
     RenderEverythingBarRoads();
+}
+
+DECL_HOOKv(RenderReflections)
+{
+    ++WetRoadReflectionHookCounter;
+
+    if(!GTA3WetRoadReflections)
+    {
+        RenderReflections();
+        return;
+    }
+
+    if(GTA3GetWetRoadReflectionStrength() <= 0.0f || !GTA3Coronas || !gpCoronaTexture || !ProcessVerticalLine || !CamPos)
+    {
+        RenderReflections();
+        return;
+    }
+
+    const int reflections = GTA3RenderWetRoadReflections();
+    const uint32_t now = m_snTimeInMilliseconds ? *m_snTimeInMilliseconds : WetRoadReflectionHookCounter;
+    if(LogRenderHook && now - LastWetRoadReflectionLog > 2500)
+    {
+        LastWetRoadReflectionLog = now;
+        GTA3SKIES_LOG("wetRoadReflections=%u enabled=%d forced=%d wet=%.3f drawn=%d coronas=%p processVertical=%p",
+                      WetRoadReflectionHookCounter,
+                      GTA3WetRoadReflections,
+                      GTA3DebugForceWetRoadReflections,
+                      GTA3GetWetRoadReflectionStrength(),
+                      reflections,
+                      GTA3Coronas,
+                      (void*)ProcessVerticalLine);
+    }
 }
 
 #endif
@@ -1206,6 +1378,9 @@ extern "C" void OnModLoad()
     SET_TO(RwIm3DTransform,            aml->GetSym(hGame, "_Z15RwIm3DTransformP18RxObjSpace3DVertexjP11RwMatrixTagj"));
     SET_TO(RwIm3DRenderIndexedPrimitive,aml->GetSym(hGame, "_Z28RwIm3DRenderIndexedPrimitive15RwPrimitiveTypePti"));
     SET_TO(RwIm3DEnd,                  aml->GetSym(hGame, "_Z9RwIm3DEndv"));
+  #ifdef GTA3_TARGET
+    SET_TO(ProcessVerticalLine,        aml->GetSym(hGame, "_ZN6CWorld19ProcessVerticalLineERK7CVectorfR9CColPointRP7CEntitybbbbbbP15CStoredCollPoly"));
+  #endif
     
     SET_TO(SunBlockedByClouds,         aml->GetSym(hGame, "_ZN8CCoronas18SunBlockedByCloudsE"));
     SET_TO(Foggyness,                  aml->GetSym(hGame, "_ZN8CWeather9FoggynessE"));
@@ -1263,6 +1438,8 @@ extern "C" void OnModLoad()
     GTA3DebugForceRainbow = cfg->GetBool("GTA3DebugForceRainbow", false);
     GTA3LightningSkyFlash = cfg->GetBool("GTA3LightningSkyFlash", true);
     GTA3DebugForceLightningFlash = cfg->GetBool("GTA3DebugForceLightningFlash", false);
+    GTA3WetRoadReflections = cfg->GetBool("GTA3WetRoadReflections", true);
+    GTA3DebugForceWetRoadReflections = cfg->GetBool("GTA3DebugForceWetRoadReflections", false);
     CameraPosOffset = cfg->GetInt("CameraPosOffset", 0x34);
     if(CameraPosOffset == 0x30) CameraPosOffset = 0x34;
     DebugSpriteDistance = cfg->GetFloat("DebugSpriteDistance", 120.0f);
@@ -1296,6 +1473,7 @@ extern "C" void OnModLoad()
   #endif
   #ifdef GTA3_TARGET
     CamPos = (CVector*)(TheCamera + CameraPosOffset);
+    GTA3Coronas = (GTA3RegisteredCorona*)aml->GetSym(hGame, "_ZN8CCoronas8aCoronasE");
   #else
     CamPos = (CVector*)(TheCamera + 0x30); // both in 1.09 and 1.12
   #endif
@@ -1306,7 +1484,8 @@ extern "C" void OnModLoad()
     HOOKBL(RenderEverythingBarRoads, pGame + 0x1C0374 + 0x1);
     HOOK(RenderClouds, aml->GetSym(hGame, "_Z11RenderScenev"));
     HOOK(GTA3WeatherUpdate, aml->GetSym(hGame, "_ZN8CWeather6UpdateEv"));
-    GTA3SKIES_LOG("Loaded. pGame=%p hGame=%p RenderBackground=%p RenderHorizon=%p DoRWRenderHorizon=%p RenderEverythingBarRoads=%p RenderScene=%p WeatherUpdate=%p beforeWorldHook=%p aspect=%.3f cameraOffset=0x%X ForceVisibleClouds=%d RenderFluffyClouds=%d DebugSprite=%d screenSpace=%d LowCloudScreen=%d LowCloudBg=%d LowCloudHorizon=%d SkyBeforeWorld=%d LowCloudCorona=%d MoonMoves=%d FixRainbow=%d ForceRainbow=%d ForceRainbowValue=%.2f LightningSky=%d ForceLightning=%d RainbowWorld=(%.1f,%.1f,%.1f) RainbowScale=(%.2f,%.1f) LogRenderHook=%d",
+    HOOK(RenderReflections, aml->GetSym(hGame, "_ZN8CCoronas17RenderReflectionsEv"));
+    GTA3SKIES_LOG("Loaded. pGame=%p hGame=%p RenderBackground=%p RenderHorizon=%p DoRWRenderHorizon=%p RenderEverythingBarRoads=%p RenderScene=%p WeatherUpdate=%p RenderReflections=%p beforeWorldHook=%p aspect=%.3f cameraOffset=0x%X ForceVisibleClouds=%d RenderFluffyClouds=%d DebugSprite=%d screenSpace=%d LowCloudScreen=%d LowCloudBg=%d LowCloudHorizon=%d SkyBeforeWorld=%d LowCloudCorona=%d MoonMoves=%d FixRainbow=%d ForceRainbow=%d ForceRainbowValue=%.2f LightningSky=%d ForceLightning=%d WetRoadReflect=%d ForceWetRoadReflect=%d Coronas=%p ProcessVerticalLine=%p RainbowWorld=(%.1f,%.1f,%.1f) RainbowScale=(%.2f,%.1f) LogRenderHook=%d",
                   (void*)pGame,
                   hGame,
                   (void*)aml->GetSym(hGame, "_ZN7CClouds16RenderBackgroundEsssssss"),
@@ -1315,6 +1494,7 @@ extern "C" void OnModLoad()
                   (void*)aml->GetSym(hGame, "_ZN9CRenderer24RenderEverythingBarRoadsEv"),
                   (void*)aml->GetSym(hGame, "_Z11RenderScenev"),
                   (void*)aml->GetSym(hGame, "_ZN8CWeather6UpdateEv"),
+                  (void*)aml->GetSym(hGame, "_ZN8CCoronas17RenderReflectionsEv"),
                   (void*)(pGame + 0x1C0374 + 0x1),
                   AspectRatioFallback,
                   CameraPosOffset,
@@ -1333,6 +1513,10 @@ extern "C" void OnModLoad()
                   GTA3DebugForceRainbowValue,
                   GTA3LightningSkyFlash,
                   GTA3DebugForceLightningFlash,
+                  GTA3WetRoadReflections,
+                  GTA3DebugForceWetRoadReflections,
+                  GTA3Coronas,
+                  (void*)ProcessVerticalLine,
                   GTA3RainbowWorldX,
                   GTA3RainbowWorldY,
                   GTA3RainbowWorldZ,
