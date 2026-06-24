@@ -8,6 +8,7 @@ void (*RenderBufferedOneXLUSprite)(CVector, float, float, uint8_t, uint8_t, uint
 void (*RenderBufferedOneXLUSprite_Rotate_Dimension)(CVector, float, float, uint8_t, uint8_t, uint8_t, short, float, float, uint8_t);
 void (*RenderBufferedOneXLUSprite_Rotate_Aspect)(CVector, float, float, uint8_t, uint8_t, uint8_t, short, float, float, uint8_t);
 void (*RenderBufferedOneXLUSprite_Rotate_2Colours)(CVector, float, float, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, float, float, float, float, uint8_t);
+void (*AddPermanentShadow)(uint8_t, void*, CVector*, float, float, float, float, int16_t, uint8_t, uint8_t, uint8_t, float, uint32_t, float);
 float (*GetATanOfXY)(float, float);
 void* (*RwIm3DTransform)(RwIm3DVertex*, uint32_t, CMatrix*, uint32_t);
 void (*RwIm3DRenderIndexedPrimitive)(uint32_t, uint16_t*, int);
@@ -19,6 +20,7 @@ float *Foggyness, *CloudCoverage, *ms_fAspectRatio, *ExtraSunnyness, *ms_cameraR
       *SunScreenX, *SunScreenY, *InterpolationValue, *Rain, *WetRoads;
 bool *LightningFlash, *LightningBurst;
 void ***gpCoronaTexture, ***gpCloudTex;
+void **gpShadowExplosionTex;
 uint8_t *ms_nGameClockHours, *ms_nGameClockMinutes, *ms_nGameClockSeconds;
 int32_t *m_nCurrentLowCloudsRed, *m_nCurrentLowCloudsGreen, *m_nCurrentLowCloudsBlue,
         *m_nCurrentFluffyCloudsTopRed, *m_nCurrentFluffyCloudsTopGreen, *m_nCurrentFluffyCloudsTopBlue,

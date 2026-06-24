@@ -55,6 +55,10 @@ static bool GTA3LightningSkyFlash = true;
 static bool GTA3DebugForceLightningFlash = false;
 static bool GTA3WetRoadReflections = true;
 static bool GTA3DebugForceWetRoadReflections = false;
+static bool GTA3FixSniperWidescreen = true;
+static bool GTA3FixExplosionShadow = true;
+static bool GTA3LogSniperWidescreen = false;
+static bool GTA3LogExplosionShadow = false;
 static uint32_t LastRainbowSkyLog = 0;
 static uint32_t LastRainbowCloudLog = 0;
 static uint32_t WetRoadReflectionHookCounter = 0;
@@ -89,6 +93,16 @@ static uint32_t BackgroundHookCounter = 0;
 static uint32_t HorizonHookCounter = 0;
 static uint32_t BeforeWorldHookCounter = 0;
 #endif
+
+struct CRect
+{
+    float left, top, right, bottom;
+};
+
+struct CRGBA
+{
+    uint8_t r, g, b, a;
+};
 
 #include "SimpleGTA.h"
 #include "vars.inl"
@@ -610,6 +624,10 @@ static void GTA3ReloadConfig(Config* cfg)
     GTA3DebugForceLightningFlash = cfg->GetBool("GTA3DebugForceLightningFlash", false);
     GTA3WetRoadReflections = cfg->GetBool("GTA3WetRoadReflections", true);
     GTA3DebugForceWetRoadReflections = cfg->GetBool("GTA3DebugForceWetRoadReflections", false);
+    GTA3FixSniperWidescreen = cfg->GetBool("GTA3FixSniperWidescreen", true);
+    GTA3FixExplosionShadow = cfg->GetBool("GTA3FixExplosionShadow", true);
+    GTA3LogSniperWidescreen = cfg->GetBool("GTA3LogSniperWidescreen", false);
+    GTA3LogExplosionShadow = cfg->GetBool("GTA3LogExplosionShadow", false);
     GTA3LowCloudHeight = cfg->GetFloat("GTA3LowCloudHeight", 40.0f);
     GTA3LowCloudWidth = cfg->GetFloat("GTA3LowCloudWidth", 320.0f);
     GTA3LowCloudScreenY = cfg->GetFloat("GTA3LowCloudScreenY", 0.5f);
@@ -824,6 +842,59 @@ DECL_HOOKv(RenderHorizon)
                       CamPos ? CamPos->x : 0.0f,
                       CamPos ? CamPos->y : 0.0f,
                       CamPos ? CamPos->z : 0.0f);
+    }
+}
+
+DECL_HOOKv(DrawSpecialRectForSniper, const CRect& rect, const CRGBA& c0, const CRGBA& c1, const CRGBA& c2, const CRGBA& c3)
+{
+    if(!GTA3FixSniperWidescreen)
+    {
+        DrawSpecialRectForSniper(rect, c0, c1, c2, c3);
+        return;
+    }
+
+    const float screenW = GTA3GetScreenWidth();
+    const float screenH = GTA3GetScreenHeight();
+    CRect fixed = rect;
+    if(screenW > 1.0f && screenH > 1.0f)
+    {
+        const float virtualW = screenH * (4.0f / 3.0f);
+        if(screenW > virtualW)
+        {
+            const float center = screenW * 0.5f;
+            const float scale = virtualW / screenW;
+            fixed.left = center + (fixed.left - center) * scale;
+            fixed.right = center + (fixed.right - center) * scale;
+        }
+    }
+
+    if(GTA3LogSniperWidescreen && LogRenderHook)
+    {
+        GTA3SKIES_LOG("sniperWide in=(%.1f %.1f %.1f %.1f) out=(%.1f %.1f %.1f %.1f) screen=%.0fx%.0f",
+                      rect.left, rect.top, rect.right, rect.bottom,
+                      fixed.left, fixed.top, fixed.right, fixed.bottom,
+                      screenW, screenH);
+    }
+
+    DrawSpecialRectForSniper(fixed, c0, c1, c2, c3);
+}
+
+DECL_HOOKv(AddExplosion, void* victim, void* creator, int explosionType, const CVector& pos, uint32_t time)
+{
+    AddExplosion(victim, creator, explosionType, pos, time);
+
+    if(!GTA3FixExplosionShadow || !AddPermanentShadow || !gpShadowExplosionTex || !*gpShadowExplosionTex) return;
+
+    CVector shadowPos = pos;
+    shadowPos.z += 0.05f;
+    AddPermanentShadow(0, *gpShadowExplosionTex, &shadowPos,
+                       8.0f, 0.0f, 0.0f, -8.0f,
+                       200, 0, 0, 0,
+                       10.0f, 30000, 1.0f);
+
+    if(GTA3LogExplosionShadow && LogRenderHook)
+    {
+        GTA3SKIES_LOG("explosionShadow type=%d pos=(%.1f %.1f %.1f) tex=%p", explosionType, pos.x, pos.y, pos.z, *gpShadowExplosionTex);
     }
 }
 
@@ -1446,6 +1517,8 @@ extern "C" void OnModLoad()
     SET_TO(RwIm3DEnd,                  aml->GetSym(hGame, "_Z9RwIm3DEndv"));
   #ifdef GTA3_TARGET
     SET_TO(ProcessVerticalLine,        aml->GetSym(hGame, "_ZN6CWorld19ProcessVerticalLineERK7CVectorfR9CColPointRP7CEntitybbbbbbP15CStoredCollPoly"));
+    SET_TO(DrawSpecialRectForSniper,   aml->GetSym(hGame, "_ZN9CSprite2d24DrawSpecialRectForSniperERK5CRectRK5CRGBAS5_S5_S5_"));
+    SET_TO(AddPermanentShadow,         aml->GetSym(hGame, "_ZN8CShadows18AddPermanentShadowEhP9RwTextureP7CVectorffffshhhfjf"));
   #endif
     
     SET_TO(SunBlockedByClouds,         aml->GetSym(hGame, "_ZN8CCoronas18SunBlockedByCloudsE"));
@@ -1480,6 +1553,9 @@ extern "C" void OnModLoad()
     SET_TO(m_snTimeInMilliseconds,     aml->GetSym(hGame, "_ZN6CTimer22m_snTimeInMillisecondsE"));
     SET_TO(NewWeatherType,             aml->GetSym(hGame, "_ZN8CWeather14NewWeatherTypeE"));
     SET_TO(OldWeatherType,             aml->GetSym(hGame, "_ZN8CWeather14OldWeatherTypeE"));
+  #ifdef GTA3_TARGET
+    SET_TO(gpShadowExplosionTex,       aml->GetSym(hGame, "gpShadowExplosionTex"));
+  #endif
     SET_TO(RsGlobal,                   aml->GetSym(hGame, "RsGlobal"));
     SET_TO(TheCamera,                  aml->GetSym(hGame, "TheCamera"));
     SET_TO(m_VectorToSun,              aml->GetSym(hGame, "_ZN10CTimeCycle13m_VectorToSunE"));
@@ -1551,6 +1627,8 @@ extern "C" void OnModLoad()
     HOOK(RenderClouds, aml->GetSym(hGame, "_Z11RenderScenev"));
     HOOK(GTA3WeatherUpdate, aml->GetSym(hGame, "_ZN8CWeather6UpdateEv"));
     HOOK(RenderReflections, aml->GetSym(hGame, "_ZN8CCoronas17RenderReflectionsEv"));
+    if(DrawSpecialRectForSniper) HOOK(DrawSpecialRectForSniper, aml->GetSym(hGame, "_ZN9CSprite2d24DrawSpecialRectForSniperERK5CRectRK5CRGBAS5_S5_S5_"));
+    HOOK(AddExplosion, aml->GetSym(hGame, "_ZN10CExplosion12AddExplosionEP7CEntityS1_14eExplosionTypeRK7CVectorj"));
     GTA3SKIES_LOG("Loaded. pGame=%p hGame=%p RenderBackground=%p RenderHorizon=%p DoRWRenderHorizon=%p RenderEverythingBarRoads=%p RenderScene=%p WeatherUpdate=%p RenderReflections=%p beforeWorldHook=%p aspect=%.3f cameraOffset=0x%X ForceVisibleClouds=%d RenderFluffyClouds=%d DebugSprite=%d screenSpace=%d LowCloudScreen=%d LowCloudBg=%d LowCloudHorizon=%d SkyBeforeWorld=%d LowCloudCorona=%d MoonMoves=%d FixRainbow=%d ForceRainbow=%d ForceRainbowValue=%.2f LightningSky=%d ForceLightning=%d WetRoadReflect=%d ForceWetRoadReflect=%d Coronas=%p ProcessVerticalLine=%p RainbowWorld=(%.1f,%.1f,%.1f) RainbowScale=(%.2f,%.1f) LogRenderHook=%d",
                   (void*)pGame,
                   hGame,
