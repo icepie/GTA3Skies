@@ -81,6 +81,7 @@ static float GTA3LowCloudDriftSpeed = 0.012f;
 static float GTA3CelestialCloudFadeScale = 0.65f;
 static float GTA3MovingMoonDistance = 150.0f;
 static float GTA3MovingMoonHeightScale = 50.0f;
+static float GTA3MoonWidthScale = 1.0f;
 static bool GTA3UseRe3LowClouds = true;
 static float GTA3Re3LowCloudDistanceScale = 800.0f;
 static float GTA3Re3LowCloudBaseZ = 40.0f;
@@ -636,6 +637,7 @@ static void GTA3ReloadConfig(Config* cfg)
     GTA3CelestialCloudFadeScale = cfg->GetFloat("GTA3CelestialCloudFadeScale", 0.65f);
     GTA3MovingMoonDistance = cfg->GetFloat("GTA3MovingMoonDistance", 150.0f);
     GTA3MovingMoonHeightScale = cfg->GetFloat("GTA3MovingMoonHeightScale", 50.0f);
+    GTA3MoonWidthScale = cfg->GetFloat("GTA3MoonWidthScale", 1.0f);
     GTA3UseRe3LowClouds = cfg->GetBool("GTA3UseRe3LowClouds", true);
     GTA3Re3LowCloudDistanceScale = cfg->GetFloat("GTA3Re3LowCloudDistanceScale", 800.0f);
     GTA3Re3LowCloudBaseZ = cfg->GetFloat("GTA3Re3LowCloudBaseZ", 40.0f);
@@ -761,7 +763,7 @@ static void GTA3RenderSkyLayer(int& lowCloudSprites, int& fluffyCloudSprites)
             int brightness = celestialVisibility * (180 - moonfadeout);
             float sz = *MoonSize * 2.0f + 4.0f;
             GTA3FixSpriteAspect(szx);
-            float drawW = szx * sz;
+            float drawW = szx * sz * GTA3MoonWidthScale;
             float drawH = szy * sz;
             RenderBufferedOneXLUSprite(screenpos, drawW, drawH, brightness, brightness, brightness, 255, 1.0f / screenpos.z, 255);
             uint32_t now = m_snTimeInMilliseconds ? *m_snTimeInMilliseconds : 0;
@@ -1117,7 +1119,7 @@ DECL_HOOKv(RenderClouds)
             int brightness = decoverage * (180 - moonfadeout);
           #endif
             GTA3FixSpriteAspect(szx);
-            float drawW = szx * sz;
+            float drawW = szx * sz * GTA3MoonWidthScale;
             float drawH = szy * sz;
             RenderBufferedOneXLUSprite(screenpos, drawW, drawH, brightness, brightness, brightness, 255, 1.0f / screenpos.z, 255);
             uint32_t now = m_snTimeInMilliseconds ? *m_snTimeInMilliseconds : 0;
@@ -1600,6 +1602,7 @@ extern "C" void OnModLoad()
     GTA3CelestialCloudFadeScale = cfg->GetFloat("GTA3CelestialCloudFadeScale", 0.65f);
     GTA3MovingMoonDistance = cfg->GetFloat("GTA3MovingMoonDistance", 150.0f);
     GTA3MovingMoonHeightScale = cfg->GetFloat("GTA3MovingMoonHeightScale", 50.0f);
+    GTA3MoonWidthScale = cfg->GetFloat("GTA3MoonWidthScale", 1.0f);
     GTA3UseRe3LowClouds = cfg->GetBool("GTA3UseRe3LowClouds", true);
     GTA3Re3LowCloudDistanceScale = cfg->GetFloat("GTA3Re3LowCloudDistanceScale", 800.0f);
     GTA3Re3LowCloudBaseZ = cfg->GetFloat("GTA3Re3LowCloudBaseZ", 40.0f);
